@@ -1,0 +1,55 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Global Safety Net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Global helpers
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // Match validation helper
+    function isValidMatch(data) {
+      return data.id is string && data.id.size() <= 128
+          && data.status is string && data.status.size() <= 20
+          && data.currentInningsIndex is int
+          && data.teams is list
+          && (data.status == 'setup' || data.status == 'active' || data.status == 'completed');
+    }
+
+    // OverSnapshot validation helper
+    function isValidOverSnapshot(data) {
+      return data.id is string && data.id.size() <= 128
+          && data.matchId is string && data.matchId.size() <= 128
+          && data.overNumber is int
+          && data.inningsIndex is int
+          && data.matchState is map;
+    }
+
+    match /matches/{matchId} {
+      allow read, list: if true;
+      allow create: if isValidId(matchId) && isValidMatch(incoming()) && incoming().createdAt == request.time;
+      allow update: if isValidId(matchId) && isValidMatch(incoming()) && incoming().updatedAt == request.time;
+      allow delete: if isValidId(matchId);
+    }
+
+    match /matches/{matchId}/oversSnapshots/{overNumber} {
+      allow read, list: if true;
+      allow create: if isValidId(matchId) && isValidId(overNumber) && isValidOverSnapshot(incoming()) && incoming().createdAt == request.time;
+      allow update: if isValidId(matchId) && isValidId(overNumber) && isValidOverSnapshot(incoming());
+      allow delete: if isValidId(matchId) && isValidId(overNumber);
+    }
+  }
+}

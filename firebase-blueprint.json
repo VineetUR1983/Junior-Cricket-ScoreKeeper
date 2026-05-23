@@ -1,0 +1,48 @@
+{
+  "entities": {
+    "Match": {
+      "title": "Match",
+      "description": "Represents a cricket match record with full statistics",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "The unique match doc ID" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Date and time when the match was created" },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Date and time when the match was last updated" },
+        "teams": { "type": "array", "description": "Roster configurations for both teams" },
+        "currentInningsIndex": { "type": "integer" },
+        "innings": { "type": "array" },
+        "strikerId": { "type": "string" },
+        "nonStrikerId": { "type": "string" },
+        "bowlerId": { "type": "string" },
+        "consecutiveExtras": { "type": "integer" },
+        "isFreeHitActive": { "type": "boolean" },
+        "status": { "type": "string" }
+      },
+      "required": ["id", "createdAt", "teams", "currentInningsIndex", "innings", "status"]
+    },
+    "OverSnapshot": {
+      "title": "OverSnapshot",
+      "description": "Represents a snapshot of a match at a specific completed over",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "matchId": { "type": "string" },
+        "overNumber": { "type": "integer" },
+        "inningsIndex": { "type": "integer" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "matchState": { "type": "object", "description": "The full serialized match state at this over" }
+      },
+      "required": ["id", "matchId", "overNumber", "inningsIndex", "createdAt", "matchState"]
+    }
+  },
+  "firestore": {
+    "/matches/{matchId}": {
+      "schema": "Match",
+      "description": "Collection of all matches"
+    },
+    "/matches/{matchId}/oversSnapshots/{overNumber}": {
+      "schema": "OverSnapshot",
+      "description": "Snapshots at the end of every over"
+    }
+  }
+}

@@ -1,0 +1,6 @@
+{
+  "name": "Junior Cricket Scorer",
+  "description": "A specialized cricket scoring application for Under 9s with custom junior rules, statistics, and player profiles.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

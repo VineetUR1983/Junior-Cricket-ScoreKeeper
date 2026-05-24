@@ -50,6 +50,7 @@ export interface Extras {
 }
 
 export interface BallRecord {
+  ballId?: string;       // Unique ID for editing
   ballNumInOver: number; // 1 to 6 (excluding Free Hits)
   overNum: number;       // 0 to 19
   strikerId: string;
@@ -65,6 +66,8 @@ export interface BallRecord {
   wicketFielderId?: string;
   wicketFielderName?: string;
   description: string;   // Ball-by-ball description
+  cumulativeRuns?: number;
+  cumulativeWickets?: number;
 }
 
 export interface Innings {

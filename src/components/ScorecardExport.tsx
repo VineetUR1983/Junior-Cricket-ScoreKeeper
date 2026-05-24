@@ -98,6 +98,10 @@ export default function ScorecardExport({ isOpen, onClose, teams, inningsList }:
       const extrasTotal = innings.extras.wides + innings.extras.noBalls + innings.extras.byes + innings.extras.legByes;
       out += `${thinDivider}\n`;
       out += `EXTRAS TOTAL: ${extrasTotal} (Wides ${innings.extras.wides}, No-Balls ${innings.extras.noBalls}, Byes ${innings.extras.byes}, Leg-Byes ${innings.extras.legByes})\n`;
+      const opponentInnings = inningsList[1 - idx];
+      const opponentWkts = opponentInnings ? opponentInnings.totalWickets : 0;
+      const penaltyRuns = opponentWkts * 4;
+      out += `OPPOSITION WKT PENALTY  : +${penaltyRuns} (4 runs x ${opponentWkts} wicket(s) lost by ${bowlTeam})\n`;
       out += `TOTAL MATCH RUNS: ${innings.totalRuns} (${innings.totalWickets} wickets, ${formatOvers(innings.ballsBowledTotal)} overs)\n`;
       out += `${thinDivider}\n\n`;
 
@@ -172,6 +176,8 @@ export default function ScorecardExport({ isOpen, onClose, teams, inningsList }:
       const batTeam = teams[innings.battingTeamIndex].name;
       const bowlTeam = teams[innings.bowlingTeamIndex].name;
       const extrasTotal = innings.extras.wides + innings.extras.noBalls + innings.extras.byes + innings.extras.legByes;
+      const opponentInnings = inningsList[1 - idx];
+      const opponentWkts = opponentInnings ? opponentInnings.totalWickets : 0;
 
       let batterRows = '';
       innings.batters.forEach((b) => {
@@ -327,6 +333,13 @@ export default function ScorecardExport({ isOpen, onClose, teams, inningsList }:
                 <td class="text-right font-black" style="color: #0f172a;">${extrasTotal}</td>
                 <td colspan="4" style="font-size: 10px; color: #64748b; font-weight: 500;">
                   (Wide penalty ${innings.extras.wides}, No-Ball penalty ${innings.extras.noBalls}, Byes ${innings.extras.byes}, Leg-Byes ${innings.extras.legByes})
+                </td>
+              </tr>
+              <tr class="totals-row" style="background-color: #fffbeb;">
+                <td colspan="2" style="color: #b45309; font-weight: bold;">Opposition Wicket Penalty</td>
+                <td class="text-right font-black" style="color: #b45309;">+${opponentWkts * 4}</td>
+                <td colspan="4" style="font-size: 10px; color: #d97706; font-weight: bold;">
+                  (4 runs x ${opponentWkts} wicket(s) lost by ${bowlTeam})
                 </td>
               </tr>
               <tr class="totals-row">

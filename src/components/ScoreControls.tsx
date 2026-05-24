@@ -4,7 +4,7 @@
  */
 
 import React, { useState } from 'react';
-import { Player, BatterStats, BowlerStats } from '../types';
+import { Player, BatterStats, BowlerStats, BallRecord } from '../types';
 import { RotateCcw, AlertCircle, HelpCircle, Check, Swords, Settings, Award } from 'lucide-react';
 
 interface ScoreControlsProps {
@@ -38,6 +38,8 @@ interface ScoreControlsProps {
   onChangeWicketKeeper2: (keeperId: string) => void;
   currentOverNumber: number;
   isSpecialSingleActive?: boolean;
+  onEndOver: () => void;
+  currentOverBalls: BallRecord[];
 }
 
 export default function ScoreControls({
@@ -61,6 +63,8 @@ export default function ScoreControls({
   onChangeWicketKeeper2,
   currentOverNumber,
   isSpecialSingleActive = false,
+  onEndOver,
+  currentOverBalls,
 }: ScoreControlsProps) {
   // Advanced panel state Toggle
   const [showAdvanced, setShowAdvanced] = useState(false);
@@ -75,6 +79,18 @@ export default function ScoreControls({
   const [wicketPlayerId, setWicketPlayerId] = useState<string>(striker?.playerId || '');
   const [wicketFielderId, setWicketFielderId] = useState<string>('');
 
+  // End of over manual decision states
+  const [showEndOverConfirm, setShowEndOverConfirm] = useState(false);
+  const [dismissedOverForNumber, setDismissedOverForNumber] = useState(-1);
+
+  const currentOverLegalBalls = currentOverBalls ? currentOverBalls.filter((b) => b.ballType !== 'FreeHit').length : 0;
+
+  React.useEffect(() => {
+    if (currentOverLegalBalls === 6 && currentOverNumber !== dismissedOverForNumber) {
+      setShowEndOverConfirm(true);
+    }
+  }, [currentOverLegalBalls, currentOverNumber, dismissedOverForNumber]);
+
   // Sync free hit state when active
   React.useEffect(() => {
     if (isFreeHit) {
@@ -86,9 +102,9 @@ export default function ScoreControls({
 
   // Quick state overrides
   const handleQuickRun = (runs: number) => {
-    if (!striker || !nonStriker || !currentBowler) return;
+    if (!striker || (!nonStriker && !isSpecialSingleActive) || !currentBowler) return;
 
-    if (striker.ballsFaced >= ballLimit && !isSpecialSingleActive) {
+    if (striker.ballsFaced >= ballLimit && !isFreeHit && !isSpecialSingleActive) {
       alert(`Batter ${striker.playerName} has hit the retirement limit of ${ballLimit} balls! Please retire them first.`);
       return;
     }
@@ -103,9 +119,9 @@ export default function ScoreControls({
   };
 
   const handleQuickExtra = (type: 'Wide' | 'NoBall' | 'Bye' | 'LegBye') => {
-    if (!striker || !nonStriker || !currentBowler) return;
+    if (!striker || (!nonStriker && !isSpecialSingleActive) || !currentBowler) return;
 
-    if (striker.ballsFaced >= ballLimit && !isSpecialSingleActive) {
+    if (striker.ballsFaced >= ballLimit && !isFreeHit && !isSpecialSingleActive) {
       alert(`Batter ${striker.playerName} has hit the retirement limit of ${ballLimit} balls! They must retire first.`);
       return;
     }
@@ -147,7 +163,7 @@ export default function ScoreControls({
 
   const handleAdvancedSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!striker || !nonStriker || !currentBowler) return;
+    if (!striker || (!nonStriker && !isSpecialSingleActive) || !currentBowler) return;
 
     if (striker.ballsFaced >= ballLimit && advBallType !== 'FreeHit' && !isSpecialSingleActive) {
       alert(`Batter ${striker.playerName} has hit the retirement limit of ${ballLimit} balls!`);
@@ -183,7 +199,7 @@ export default function ScoreControls({
   };
 
   const handleWicketSubmit = () => {
-    if (!striker || !nonStriker || !currentBowler) return;
+    if (!striker || (!nonStriker && !isSpecialSingleActive) || !currentBowler) return;
 
     if (isFreeHit && wicketType !== 'Run Out' && wicketType !== 'Retired') {
       alert("FREE HIT RULES: You can ONLY get out by a Run Out or Retired off a Free Hit ball!");
@@ -232,8 +248,11 @@ export default function ScoreControls({
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {/* Striker Select */}
               <div className="space-y-1.5 animate-in fade-in">
-                <label className="block text-[10px] font-black text-slate-500 uppercase tracking-wider">
-                  Striker (ON STRIKE *)
+                <label className="block text-[10px] font-black text-slate-500 uppercase tracking-wider flex items-center justify-between">
+                  <span>Striker (ON STRIKE *)</span>
+                  {isSpecialSingleActive && (
+                    <span className="text-[8px] bg-indigo-100 text-indigo-700 font-extrabold px-1.5 py-0.5 rounded-md uppercase tracking-wide">SOLO STRIKER</span>
+                  )}
                 </label>
                 <select
                   value={striker?.playerId || ''}
@@ -248,28 +267,42 @@ export default function ScoreControls({
                       {b.name} ({b.role})
                     </option>
                   ))}
-                  {striker && striker.ballsFaced < ballLimit && <option value={striker.playerId} disabled>{striker.playerName} (Current)</option>}
+                  {striker && (
+                    <option value={striker.playerId} disabled>
+                      {striker.playerName} ({isSpecialSingleActive ? 'Solo Striker' : 'Current'})
+                    </option>
+                  )}
                 </select>
               </div>
 
               {/* Non Striker Select */}
               <div className="space-y-1.5 flex flex-col justify-end">
-                <label className="block text-[10px] font-black text-slate-500 uppercase tracking-wider mb-1.5">
-                  Non-Striker
+                <label className="block text-[10px] font-black text-slate-500 uppercase tracking-wider mb-1.5 flex items-center justify-between">
+                  <span>Non-Striker</span>
+                  {isSpecialSingleActive && (
+                    <span className="text-[8px] bg-indigo-100 text-indigo-700 font-extrabold px-1.5 py-0.5 rounded-md uppercase tracking-wide">SOLO RUNNER ONLY</span>
+                  )}
                 </label>
                 <select
                   value={nonStriker?.playerId || ''}
                   onChange={(e) => onChangeNonStriker(e.target.value)}
-                  className="w-full px-3.5 py-2.5 bg-white border border-slate-200 rounded-xl text-xs font-semibold text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-500/30 cursor-pointer"
+                  disabled={isSpecialSingleActive && !nonStriker}
+                  className="w-full px-3.5 py-2.5 bg-white border border-slate-200 rounded-xl text-xs font-semibold text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-500/30 cursor-pointer disabled:bg-indigo-50/50 disabled:border-indigo-150 disabled:text-indigo-900 disabled:font-black"
                   id="select-non-striker"
                 >
-                  <option value="" disabled>-- Select Non-Striker --</option>
+                  <option value="" disabled={!isSpecialSingleActive}>
+                    {isSpecialSingleActive ? '-- No Non-Striker (Solo Mode) --' : '-- Select Non-Striker --'}
+                  </option>
                   {availableBatters.map((b) => (
                     <option key={b.id} value={b.id}>
                       {b.name} ({b.role})
                     </option>
                   ))}
-                  {nonStriker && nonStriker.ballsFaced < ballLimit && <option value={nonStriker.playerId} disabled>{nonStriker.playerName} (Current)</option>}
+                  {nonStriker && (
+                    <option value={nonStriker.playerId} disabled>
+                      {nonStriker.playerName} ({isSpecialSingleActive ? 'Solo Runner' : 'Current'})
+                    </option>
+                  )}
                 </select>
               </div>
             </div>
@@ -357,41 +390,54 @@ export default function ScoreControls({
       </div>
 
       {/* Roster Assignment warnings */}
-      {(isStrikerNull || isNonStrikerNull || isBowlerNull) ? (
+      {(isStrikerNull || (isNonStrikerNull && !isSpecialSingleActive) || isBowlerNull) ? (
         <div className="bg-amber-50 text-amber-800 text-xs p-4 rounded-2xl border border-amber-200 flex items-start gap-3">
           <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5 animate-pulse" />
           <div>
             <span className="font-extrabold block mb-0.5 uppercase tracking-wide">CREASE LINEUP REQUIRED</span>
-            Ensure you assign the Striker, Non-Striker, and Bowler above to open the ball recording score control keypad.
+            Ensure you assign the Striker, Non-Striker (if not Solo Mode), and Bowler above to open the ball recording score control keypad.
           </div>
         </div>
       ) : (
         <div className="space-y-6">
           {/* Quick Score Pad Deck */}
           <div className="space-y-4" id="quick-score-pad">
-            <div className="flex justify-between items-center">
+            <div className="flex flex-wrap gap-2 justify-between items-center">
               <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
                 BALL BY BALL SCORING PAD
               </h3>
               
-              {!isSpecialSingleActive ? (
+              <div className="flex flex-wrap items-center gap-2">
                 <button
-                  onClick={() => {
-                    onChangeStriker(nonStriker.playerId);
-                    onChangeNonStriker(striker.playerId);
-                  }}
-                  className="px-3 py-1.5 bg-indigo-55 hover:bg-indigo-100 text-indigo-700 font-extrabold text-xs rounded-xl transition-all flex items-center gap-1.5 cursor-pointer"
-                  title="Swap batsman striker ends"
+                  type="button"
+                  onClick={() => setShowEndOverConfirm(true)}
+                  className="px-3 py-1.5 bg-amber-550 hover:bg-amber-600 text-white font-extrabold text-xs rounded-xl transition-all shadow-xs flex items-center gap-1 cursor-pointer"
+                  title="Force end the current over manually"
+                  id="btn-manual-end-over"
                 >
-                  <Swords className="w-3.5 h-3.5" />
-                  <span>ROTATE STRIKE</span>
+                  <span>END OVER ➔</span>
                 </button>
-              ) : (
-                <span className="text-[9px] font-extrabold bg-indigo-50 border border-indigo-200 text-indigo-700 px-2.5 py-1 rounded-lg uppercase tracking-wider flex items-center gap-1.5">
-                  <Swords className="w-3 h-3 text-indigo-550" />
-                  <span>Solo Striker Locked</span>
-                </span>
-              )}
+
+                {!isSpecialSingleActive ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onChangeStriker(nonStriker.playerId);
+                      onChangeNonStriker(striker.playerId);
+                    }}
+                    className="px-3 py-1.5 bg-indigo-55 hover:bg-indigo-100 text-indigo-700 font-extrabold text-xs rounded-xl transition-all flex items-center gap-1.5 cursor-pointer"
+                    title="Swap batsman striker ends"
+                  >
+                    <Swords className="w-3.5 h-3.5" />
+                    <span>ROTATE STRIKE</span>
+                  </button>
+                ) : (
+                  <span className="text-[9px] font-extrabold bg-indigo-50 border border-indigo-200 text-indigo-700 px-2.5 py-1 rounded-lg uppercase tracking-wider flex items-center gap-1.5">
+                    <Swords className="w-3 h-3 text-indigo-555" />
+                    <span>Solo Striker Locked</span>
+                  </span>
+                )}
+              </div>
             </div>
             
             {/* Minimal CSS design control block: exact score buttons from template */}
@@ -748,6 +794,59 @@ export default function ScoreControls({
                 className="px-5 py-2.5 bg-red-600 hover:bg-red-700 text-white font-extrabold text-xs rounded-xl shadow-xs"
               >
                 Confirm Out
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* End Over Confirmation Modal */}
+      {showEndOverConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-xs">
+          <div className="bg-white rounded-3xl p-6 max-w-sm w-full border border-slate-100 shadow-xl space-y-4 animate-in fade-in zoom-in-95" id="end-over-confirm-modal">
+            <div className="flex items-center justify-between">
+              <h4 className="text-sm font-black text-slate-800 uppercase tracking-wider flex items-center gap-1.5 font-sans">
+                <Settings className="w-4 h-4 text-indigo-600" />
+                <span>Confirm End of Over {currentOverNumber}</span>
+              </h4>
+              <button
+                type="button"
+                onClick={() => {
+                  setDismissedOverForNumber(currentOverNumber);
+                  setShowEndOverConfirm(false);
+                }}
+                className="text-slate-400 hover:text-slate-600 font-extrabold text-sm hover:scale-110 transition-all cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+            <p className="text-xs text-slate-600 leading-relaxed font-sans">
+              Currently, <b className="text-indigo-600 font-extrabold">{currentOverLegalBalls}</b> legal balls have been bowled in Over {currentOverNumber}.
+              <br /><br />
+              Do you want to confirm ending this over? This will rotate batsman strike ends and unassign the current bowler.
+            </p>
+            <div className="flex items-center gap-2.5 pt-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowEndOverConfirm(false);
+                  onEndOver();
+                }}
+                className="flex-1 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold transition-all shadow-xs cursor-pointer text-center hover:scale-102 active:scale-98"
+                id="btn-confirm-end-over-ok"
+              >
+                Confirm End Over
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setDismissedOverForNumber(currentOverNumber);
+                  setShowEndOverConfirm(false);
+                }}
+                className="flex-1 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-250 text-slate-700 text-xs font-bold transition-all cursor-pointer text-center hover:scale-102 active:scale-98"
+                id="btn-confirm-end-over-cancel"
+              >
+                Keep Bowling
               </button>
             </div>
           </div>

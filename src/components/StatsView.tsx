@@ -173,6 +173,27 @@ export default function StatsView({ teams, inningsList, currentInningsIndex }: S
                       (Wide {selectedInnings.extras.wides}, No-Ball {selectedInnings.extras.noBalls}, Bye {selectedInnings.extras.byes}, Leg-Bye {selectedInnings.extras.legByes})
                     </td>
                   </tr>
+
+                  {/* Opposition Wicket Penalty segment/row */}
+                  {(() => {
+                    const opponentInnings = inningsList[1 - activeInningsTab];
+                    const opponentWickets = opponentInnings ? opponentInnings.totalWickets : 0;
+                    const penaltyRuns = opponentWickets * 4;
+                    const opponentTeamName = selectedBowlingTeamName;
+                    return (
+                      <tr className="bg-amber-50/45 text-amber-900 border-t border-slate-200 font-bold" id={`wicket-penalty-row-inn-${activeInningsTab}`}>
+                        <td className="py-3.5 px-4 text-amber-700 font-extrabold uppercase text-[10px] tracking-wide" colSpan={2}>
+                          OPPOSITION WICKET PENALTY
+                        </td>
+                        <td className="py-3.5 px-4 text-center text-amber-800 font-black font-mono text-sm">
+                          +{penaltyRuns}
+                        </td>
+                        <td className="py-3.5 px-4 text-amber-600 text-center text-[11px] font-bold" colSpan={4}>
+                          (4 Runs recorded for each of the {opponentWickets} wicket(s) lost by {opponentTeamName} batting)
+                        </td>
+                      </tr>
+                    );
+                  })()}
                   <tr className="bg-indigo-50/20 font-black text-slate-900 border-t border-slate-200">
                     <td className="py-4 px-4 text-indigo-805 uppercase tracking-wide text-[11px]" colSpan={2}>
                       GRAND INNINGS TOTAL

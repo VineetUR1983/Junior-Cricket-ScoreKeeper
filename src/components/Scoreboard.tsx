@@ -22,6 +22,7 @@ interface ScoreboardProps {
   wicketKeeper2Id: string;
   isSpecialSingleActive?: boolean;
   matchOvers?: number;
+  onSelectBallToEdit?: (ball: BallRecord, idx: number) => void;
 }
 
 export default function Scoreboard({
@@ -39,6 +40,7 @@ export default function Scoreboard({
   wicketKeeper2Id,
   isSpecialSingleActive = false,
   matchOvers = 20,
+  onSelectBallToEdit,
 }: ScoreboardProps) {
   // Helpers
   const formatOvers = (balls: number) => {
@@ -206,13 +208,20 @@ export default function Scoreboard({
             {/* Non-Striker Panel */}
             <div className={`p-4 rounded-xl border transition-all ${
               activeNonStriker 
-                ? 'bg-white border-slate-200 text-slate-900 shadow-xs' 
+                ? (isSpecialSingleActive 
+                    ? 'bg-indigo-50/40 border-indigo-200 text-slate-800 shadow-xs' 
+                    : 'bg-white border-slate-200 text-slate-900 shadow-xs') 
                 : 'bg-white border-slate-200 border-dashed text-slate-400 flex items-center justify-center py-6'
             }`} id="non-striker-panel">
               {activeNonStriker ? (
                 <div className="flex justify-between items-center w-full">
                   <div className="space-y-2">
-                    <p className="font-extrabold text-sm text-slate-700">{activeNonStriker.playerName}</p>
+                    <div className="flex items-center gap-1.5">
+                      <p className="font-extrabold text-sm text-slate-700">{activeNonStriker.playerName}</p>
+                      {isSpecialSingleActive && (
+                        <span className="text-[8px] bg-indigo-100 text-indigo-700 font-extrabold px-1.5 py-0.5 rounded-md uppercase tracking-wide">SOLO RUNNER</span>
+                      )}
+                    </div>
                     <div className="flex gap-2 items-center">
                       <span className="text-[11px] text-slate-500">
                         Quota: <b className="text-slate-700">{activeNonStriker.ballsFaced} / {ballLimit} balls</b>
@@ -323,30 +332,35 @@ export default function Scoreboard({
       )}
 
       {/* Ball by Ball over feed */}
-      {innings.currentOverBalls.length > 0 && (
+      {innings && (
         <div className="bg-white rounded-3xl border border-slate-200 p-5 shadow-xs" id="current-over-feed">
           <div className="flex items-center justify-between mb-4 pb-2 border-b border-slate-100">
-            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
-              Current Over Sequence
-            </p>
+            <div>
+              <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
+                Current Over Sequence
+              </p>
+              <p className="text-[9px] text-slate-400/90 font-medium">Click any ball below to change its scoring details</p>
+            </div>
             <span className="text-[9px] font-bold text-indigo-600 bg-indigo-50 px-2.5 py-1 rounded-lg">
-              {innings.currentOverBalls.length} ball(s) complete
+              {innings.currentOverBalls.filter((b) => b.ballType !== 'FreeHit').length} / 6 legal ball(s) complete
             </span>
           </div>
           <div className="flex flex-wrap gap-2.5">
             {innings.currentOverBalls.map((b, idx) => (
-              <div
+              <button
                 key={idx}
-                className={`w-10 h-10 rounded-full flex flex-col items-center justify-center font-extrabold text-xs transition-all relative ${
+                type="button"
+                onClick={() => onSelectBallToEdit?.(b, idx)}
+                className={`w-10 h-10 rounded-full flex flex-col items-center justify-center font-extrabold text-xs transition-all cursor-pointer hover:scale-108 active:scale-95 relative ${
                   b.isWicket
-                    ? 'bg-red-500 text-white shadow-xs'
+                    ? 'bg-red-500 text-white shadow-xs hover:bg-red-600'
                     : b.ballType === 'FreeHit'
-                    ? 'bg-rose-50 border border-rose-300 text-rose-700 ring-2 ring-rose-500/20'
+                    ? 'bg-rose-50 border border-rose-300 text-rose-700 ring-2 ring-rose-500/20 hover:bg-rose-100'
                     : b.ballType === 'Wide' || b.ballType === 'NoBall'
-                    ? 'bg-amber-50 text-amber-700 ring-2 ring-amber-400/30'
-                    : 'bg-indigo-50 text-indigo-700 border border-indigo-100'
+                    ? 'bg-amber-50 text-amber-700 ring-2 ring-amber-400/30 hover:bg-amber-100'
+                    : 'bg-indigo-50 text-indigo-700 border border-indigo-100 hover:bg-indigo-100'
                 }`}
-                title={b.description}
+                title="Click to edit details of this ball"
               >
                 <span>
                   {b.isWicket ? 'W' : b.ballType === 'Wide' ? 'WD' : b.ballType === 'NoBall' ? 'NB' : b.runsFromBat}
@@ -359,11 +373,11 @@ export default function Scoreboard({
                 {b.ballType === 'FreeHit' && (
                   <span className="absolute -top-1 -right-0.5 bg-rose-600 w-2 h-2 rounded-full" />
                 )}
-              </div>
+              </button>
             ))}
             
             {/* Blanks representing remaining balls inside the over */}
-            {Array.from({ length: Math.max(0, 6 - innings.currentOverBalls.length) }).map((_, i) => (
+            {Array.from({ length: Math.max(0, 6 - innings.currentOverBalls.filter((b) => b.ballType !== 'FreeHit').length) }).map((_, i) => (
               <div key={`blank-${i}`} className="w-10 h-10 rounded-full flex items-center justify-center font-bold border-2 border-dashed border-slate-200 text-slate-300 select-none">
                 ?
               </div>

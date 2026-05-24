@@ -13,6 +13,7 @@ import MatchHistory from './components/MatchHistory';
 import OversRecovery from './components/OversRecovery';
 import CorrectTypos from './components/CorrectTypos';
 import ScorecardExport from './components/ScorecardExport';
+import EditBallModal from './components/EditBallModal';
 import { db, saveMatch, deleteMatch, saveOverSnapshot, cleanUpSubsequentSnapshots } from './firebase';
 import { collection, query, orderBy, onSnapshot } from 'firebase/firestore';
 import { Trophy, RefreshCw, Play, BookOpen, RotateCcw, PencilLine, Plus, Trash2, Calendar, Loader2, Share2 } from 'lucide-react';
@@ -73,6 +74,11 @@ export default function App() {
 
   const [matchOvers, setMatchOvers] = useState<number>(20);
   const [matchBatsmanBallLimit, setMatchBatsmanBallLimit] = useState<number>(24);
+
+  // Ball Editing State
+  const [selectedBallToEdit, setSelectedBallToEdit] = useState<BallRecord | null>(null);
+  const [selectedBallIndex, setSelectedBallIndex] = useState<number>(-1);
+  const [isEditBallModalOpen, setIsEditBallModalOpen] = useState<boolean>(false);
 
   const [currentInningsIndex, setCurrentInningsIndex] = useState<0 | 1 | 2>(0); // 0 = Setup, 1 = 1st Innings, 2 = 2nd Innings
   const [inningsList, setInningsList] = useState<[Innings | null, Innings | null]>([null, null]);
@@ -394,6 +400,279 @@ export default function App() {
     }
   };
 
+  const recalculateInnings = (inn: Innings, battingTeam: Team, bowlingTeam: Team): Innings => {
+    // 1. Re-initialize batters list to clean slate
+    const resetBatters: BatterStats[] = battingTeam.players.map((p) => ({
+      playerId: p.id,
+      playerName: p.name,
+      runs: 0,
+      ballsFaced: 0,
+      fours: 0,
+      sixes: 0,
+      isOut: false,
+      howOut: '',
+    }));
+
+    // 2. Re-initialize bowler list
+    const resetBowlers: BowlerStats[] = [];
+
+    // 3. Reset team totals
+    let totalRuns = 0;
+    let totalWickets = 0;
+    let ballsBowledTotal = 0;
+    const extras = { wides: 0, noBalls: 0, byes: 0, legByes: 0 };
+
+    // 4. Process all balls in order
+    inn.balls.forEach((b) => {
+      const striker = resetBatters.find((bt) => bt.playerId === b.strikerId);
+
+      // Bowler stats check
+      if (b.bowlerId) {
+        let bowler = resetBowlers.find((bw) => bw.playerId === b.bowlerId);
+        if (!bowler) {
+          const p = bowlingTeam.players.find((pl) => pl.id === b.bowlerId);
+          bowler = {
+            playerId: b.bowlerId,
+            playerName: p ? p.name : 'Unknown',
+            ballsBowled: 0,
+            runsConceded: 0,
+            wickets: 0,
+            maidens: 0,
+            wides: 0,
+            noBalls: 0,
+            oversHistory: {},
+          };
+          resetBowlers.push(bowler);
+        }
+
+        // Team and Bowler stats additions
+        const runsBat = Number(b.runsFromBat || 0);
+        const runsExt = Number(b.runsFromExtras || 0);
+        const totalRunsThisBall = runsBat + runsExt;
+        totalRuns += totalRunsThisBall;
+
+        // Store cumulative stats for auditability
+        b.cumulativeRuns = totalRuns;
+        b.cumulativeWickets = totalWickets;
+
+        // Batsman balls
+        const countsTowardsBatsmanBalls = b.ballType !== 'FreeHit';
+        if (striker && countsTowardsBatsmanBalls) {
+          striker.ballsFaced += 1;
+        }
+        if (striker) {
+          striker.runs += runsBat;
+          if (runsBat === 4) striker.fours += 1;
+          if (runsBat === 6) striker.sixes += 1;
+        }
+
+        // Bowler balls
+        const countsTowardsBowlerBalls = b.ballType !== 'FreeHit';
+        if (countsTowardsBowlerBalls) {
+          ballsBowledTotal += 1;
+          bowler.ballsBowled += 1;
+        }
+
+        let runsConcededToBowler = runsBat;
+        if (b.ballType === 'Wide' || b.ballType === 'NoBall') {
+          runsConcededToBowler += runsExt;
+        }
+        bowler.runsConceded += runsConcededToBowler;
+
+        // Extras
+        if (b.ballType === 'Wide') {
+          bowler.wides += 1;
+          extras.wides += runsExt;
+        } else if (b.ballType === 'NoBall') {
+          bowler.noBalls += 1;
+          extras.noBalls += runsExt;
+        } else if (b.extraType === 'Wide') {
+          extras.wides += runsExt;
+        } else if (b.extraType === 'NoBall') {
+          extras.noBalls += runsExt;
+        } else if (b.extraType === 'Bye') {
+          extras.byes += runsExt;
+        } else if (b.extraType === 'LegBye') {
+          extras.legByes += runsExt;
+        }
+
+        // Wicket
+        if (b.wicketType) {
+          const outPlayer = resetBatters.find((bt) => bt.playerId === b.wicketPlayerId);
+          if (outPlayer) {
+            if (b.wicketType === 'Retired') {
+              outPlayer.isOut = true;
+              outPlayer.howOut = 'Retired';
+            } else {
+              totalWickets += 1;
+              if (b.wicketType === 'Caught') {
+                outPlayer.howOut = b.wicketFielderName ? `ct. ${b.wicketFielderName} b. ${bowler.playerName}` : `Caught b. ${bowler.playerName}`;
+                outPlayer.caughtBy = b.wicketFielderName;
+                outPlayer.bowledBy = bowler.playerName;
+              } else if (b.wicketType === 'Bowled') {
+                outPlayer.howOut = `b. ${bowler.playerName}`;
+                outPlayer.bowledBy = bowler.playerName;
+              } else if (b.wicketType === 'LBW') {
+                outPlayer.howOut = `lbw b. ${bowler.playerName}`;
+                outPlayer.bowledBy = bowler.playerName;
+              } else if (b.wicketType === 'Stumped') {
+                outPlayer.howOut = b.wicketFielderName ? `st. ${b.wicketFielderName} b. ${bowler.playerName}` : `Stumped b. ${bowler.playerName}`;
+                outPlayer.stumpedBy = b.wicketFielderName;
+                outPlayer.bowledBy = bowler.playerName;
+              } else if (b.wicketType === 'Run Out') {
+                outPlayer.howOut = b.wicketFielderName ? `Run Out (${b.wicketFielderName})` : `Run Out`;
+                outPlayer.runOutBy = b.wicketFielderName;
+              } else {
+                outPlayer.howOut = b.wicketType;
+              }
+
+              if (b.wicketType !== 'Run Out') {
+                bowler.wickets += 1;
+              }
+            }
+          }
+        }
+      }
+    });
+
+    // Re-verify and apply ball limit retirement for physical bat exit
+    resetBatters.forEach((b) => {
+      if (b.ballsFaced >= inn.batsmanBallLimit) {
+        b.isOut = true;
+        if (b.howOut === 'Active' || b.howOut === '') {
+          b.howOut = 'Retired (Limit Reached)';
+        }
+      }
+    });
+
+    // Update currentOverBalls reference with newly updated balls to keep cumulative info synced
+    const recalculatedCurrentOverBalls = inn.currentOverBalls.map((cob) => {
+      const matchedBall = inn.balls.find((b) => b.ballId === cob.ballId);
+      return matchedBall ? { ...matchedBall } : cob;
+    });
+
+    return {
+      ...inn,
+      balls: inn.balls,
+      currentOverBalls: recalculatedCurrentOverBalls,
+      totalRuns,
+      totalWickets,
+      ballsBowledTotal,
+      extras,
+      batters: resetBatters,
+      bowlers: resetBowlers,
+    };
+  };
+
+  const handleEndOver = () => {
+    saveSnapshot();
+
+    const inningsIdx = currentInningsIndex - 1;
+    const innings = inningsList[inningsIdx];
+    if (!innings) return;
+
+    // Save snapshot of previous roster state to handle strike rotation properly
+    let nextStrikerId = strikerId;
+    let nextNonStrikerId = nonStrikerId;
+
+    const updatedInnings = { ...innings };
+    
+    // Rotate strike (if not solo active)
+    const currentBattersNotFinished = updatedInnings.batters.filter(
+      (b) => !b.isOut && !b.howOut.includes('Retired') && b.ballsFaced < updatedInnings.batsmanBallLimit
+    );
+    const isSoloActive = currentBattersNotFinished.length === 1;
+
+    if (nextStrikerId && nextNonStrikerId && !isSoloActive) {
+      const temp = nextStrikerId;
+      nextStrikerId = nextNonStrikerId;
+      nextNonStrikerId = temp;
+      setStrikerId(nextStrikerId);
+      setNonStrikerId(nextNonStrikerId);
+    }
+
+    // Bowler is unassigned to force selection
+    setBowlerId('');
+    setConsecutiveExtras(0);
+    setIsFreeHitActive(false);
+
+    const currentOverNum = updatedInnings.currentOverBalls.length > 0 
+      ? updatedInnings.currentOverBalls[updatedInnings.currentOverBalls.length - 1].overNum + 1
+      : 1;
+
+    // Manually clear current over balls block
+    updatedInnings.currentOverBalls = [];
+
+    const updatedInningsList = [...inningsList] as [Innings | null, Innings | null];
+    updatedInningsList[inningsIdx] = updatedInnings;
+    setInningsList(updatedInningsList);
+
+    if (activeMatchId) {
+      syncStateToFirestore(activeMatchId, {
+        inningsList: updatedInningsList,
+        strikerId: nextStrikerId,
+        nonStrikerId: nextNonStrikerId,
+        bowlerId: '',
+        consecutiveExtras: 0,
+        isFreeHitActive: false,
+      });
+
+      saveOverSnapshot(activeMatchId, currentOverNum, inningsIdx, {
+        teams,
+        currentInningsIndex,
+        inningsList: updatedInningsList,
+        strikerId: nextStrikerId,
+        nonStrikerId: nextNonStrikerId,
+        bowlerId: '',
+        consecutiveExtras: 0,
+        isFreeHitActive: false,
+        teamsConfig: teams,
+      });
+    }
+
+    alert('Current over completed! Strike rotated and bowler unassigned successfully.');
+  };
+
+  const handleSaveEditedBall = (updatedBall: BallRecord) => {
+    saveSnapshot();
+
+    const inningsIdx = currentInningsIndex - 1;
+    const innings = inningsList[inningsIdx];
+    if (!innings || !currentBattingTeam || !currentBowlingTeam) return;
+
+    const updatedBalls = innings.balls.map((b) => {
+      if (updatedBall.ballId && b.ballId === updatedBall.ballId) {
+        return updatedBall;
+      }
+      return b;
+    });
+
+    const updatedCurrentOverBalls = innings.currentOverBalls.map((b) => {
+      if (updatedBall.ballId && b.ballId === updatedBall.ballId) {
+        return updatedBall;
+      }
+      return b;
+    });
+
+    const updatedInnings = {
+      ...innings,
+      balls: updatedBalls,
+      currentOverBalls: updatedCurrentOverBalls,
+    };
+
+    const recalculated = recalculateInnings(updatedInnings, currentBattingTeam, currentBowlingTeam);
+
+    const updatedInningsList = [...inningsList] as [Innings | null, Innings | null];
+    updatedInningsList[inningsIdx] = recalculated;
+    setInningsList(updatedInningsList);
+
+    if (activeMatchId) {
+      syncStateToFirestore(activeMatchId, {
+        inningsList: updatedInningsList,
+      });
+    }
+  };
+
   // Switch between setup screen and core application match play status
   const startMatchPlay = () => {
     const battingTeamIdx = 0;
@@ -566,25 +845,39 @@ export default function App() {
     const strikerStats = updatedBatters.find((b) => b.playerId === strikerId);
     const nonStrikerStats = updatedBatters.find((b) => b.playerId === nonStrikerId);
 
-    if (!strikerStats || !nonStrikerStats) {
-      alert('Please activate both Striker and Non-Striker first!');
+    const currentEligibles = updatedBatters.filter((b) => !b.isOut && !b.howOut.includes('Retired'));
+    const isSoloModeActive = currentEligibles.length === 1;
+
+    if (!strikerStats) {
+      alert('Please activate Striker first!');
       return;
     }
 
-    let overNum = Math.floor(updatedInnings.ballsBowledTotal / 6);
-    let ballNumInOver = (updatedInnings.ballsBowledTotal % 6) + 1;
-
-    // RULE: If we have an active Free Hit triggered at the end of the over,
-    // the Free Hit must be recorded in the SAME over.
-    if (isFreeHitActive && updatedInnings.ballsBowledTotal > 0 && updatedInnings.ballsBowledTotal % 6 === 0) {
-      overNum = overNum - 1;
-      ballNumInOver = 6;
+    if (!nonStrikerStats && !isSoloModeActive) {
+      alert('Please activate Non-Striker first!');
+      return;
     }
+
+    const countsTowardsBowlerBalls = ballData.ballType !== 'FreeHit';
+
+    let overNum = 0;
+    if (updatedInnings.balls.length === 0) {
+      overNum = 0;
+    } else if (updatedInnings.currentOverBalls.length === 0) {
+      overNum = updatedInnings.balls[updatedInnings.balls.length - 1].overNum + 1;
+    } else {
+      overNum = updatedInnings.currentOverBalls[updatedInnings.currentOverBalls.length - 1].overNum;
+    }
+
+    const previousBowlerBallsCount = updatedInnings.currentOverBalls.filter(
+      (b) => b.ballType !== 'FreeHit'
+    ).length;
+    let ballNumInOver = countsTowardsBowlerBalls ? previousBowlerBallsCount + 1 : 0;
 
     const totalRunsThisBall = ballData.runsFromBat + ballData.runsFromExtras;
     updatedInnings.totalRuns += totalRunsThisBall;
 
-    const countsTowardsBatsmanBalls = ballData.ballType !== 'Wide';
+    const countsTowardsBatsmanBalls = ballData.ballType !== 'FreeHit' && !isFreeHitActive;
     if (countsTowardsBatsmanBalls) {
       strikerStats.ballsFaced += 1;
     }
@@ -593,7 +886,6 @@ export default function App() {
     if (ballData.runsFromBat === 4) strikerStats.fours += 1;
     if (ballData.runsFromBat === 6) strikerStats.sixes += 1;
 
-    const countsTowardsBowlerBalls = ballData.ballType !== 'FreeHit';
     if (countsTowardsBowlerBalls) {
       updatedInnings.ballsBowledTotal += 1;
       bowlerStats.ballsBowled += 1;
@@ -623,10 +915,10 @@ export default function App() {
     if (ballData.wicketType) {
       const outPlayerStats = updatedBatters.find((b) => b.playerId === ballData.wicketPlayerId);
       if (outPlayerStats) {
-        outPlayerStats.isOut = true;
         gotOut = true;
 
         if (ballData.wicketType === 'Retired') {
+          outPlayerStats.isOut = true;
           outPlayerStats.howOut = 'Retired';
           wicketDetailsString = `Retired: ${outPlayerStats.playerName}`;
         } else {
@@ -661,23 +953,43 @@ export default function App() {
           }
         }
 
-        if (ballData.wicketPlayerId === strikerId) {
-          setStrikerId('');
-        } else if (ballData.wicketPlayerId === nonStrikerId) {
-          setNonStrikerId('');
+        if (ballData.wicketType === 'Retired') {
+          if (ballData.wicketPlayerId === strikerId) {
+            setStrikerId('');
+          } else if (ballData.wicketPlayerId === nonStrikerId) {
+            setNonStrikerId('');
+          }
         }
       }
     }
+
+    const additionalRunsRecorded = ballData.ballType === 'Wide' || ballData.ballType === 'NoBall'
+      ? Math.max(0, ballData.runsFromExtras - 1)
+      : ballData.runsFromExtras;
 
     let ballDescription = `${bowlerStats.playerName} to ${strikerStats.playerName}: `;
     if (gotOut) {
       ballDescription += wicketDetailsString;
     } else if (ballData.ballType === 'Wide') {
-      ballDescription += `Wide delivery`;
+      if (additionalRunsRecorded > 0) {
+        ballDescription += `Wide delivery + ${additionalRunsRecorded} extra run${additionalRunsRecorded > 1 ? 's' : ''}`;
+      } else {
+        ballDescription += `Wide delivery`;
+      }
     } else if (ballData.ballType === 'NoBall') {
-      ballDescription += `No ball delivery`;
+      if (ballData.runsFromBat > 0) {
+        ballDescription += `No ball delivery, ${ballData.runsFromBat} run${ballData.runsFromBat > 1 ? 's' : ''} scored off bat`;
+      } else if (additionalRunsRecorded > 0) {
+        ballDescription += `No ball delivery + ${additionalRunsRecorded} extra run${additionalRunsRecorded > 1 ? 's' : ''}`;
+      } else {
+        ballDescription += `No ball delivery`;
+      }
     } else if (ballData.ballType === 'FreeHit') {
       ballDescription += `Free hit delivery scored for ${ballData.runsFromBat}`;
+    } else if (ballData.extraType === 'Bye' && additionalRunsRecorded > 0) {
+      ballDescription += `Byes, ${additionalRunsRecorded} extra run${additionalRunsRecorded > 1 ? 's' : ''}`;
+    } else if (ballData.extraType === 'LegBye' && additionalRunsRecorded > 0) {
+      ballDescription += `Leg byes, ${additionalRunsRecorded} extra run${additionalRunsRecorded > 1 ? 's' : ''}`;
     } else if (ballData.runsFromBat === 4) {
       ballDescription += `Boundary four runs`;
     } else if (ballData.runsFromBat === 6) {
@@ -689,6 +1001,7 @@ export default function App() {
     }
 
     const ballRecord: BallRecord = {
+      ballId: `${overNum}-${ballNumInOver}-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
       ballNumInOver: countsTowardsBowlerBalls ? ballNumInOver : 0, 
       overNum,
       strikerId,
@@ -704,15 +1017,12 @@ export default function App() {
       wicketFielderId: ballData.wicketFielderId,
       wicketFielderName: ballData.wicketFielderName,
       description: ballDescription,
+      cumulativeRuns: updatedInnings.totalRuns,
+      cumulativeWickets: updatedInnings.totalWickets,
     };
 
     updatedInnings.balls.push(ballRecord);
-
-    if (ballNumInOver === 1 && countsTowardsBowlerBalls && updatedInnings.currentOverBalls.length >= 6) {
-      updatedInnings.currentOverBalls = [ballRecord];
-    } else {
-      updatedInnings.currentOverBalls.push(ballRecord);
-    }
+    updatedInnings.currentOverBalls.push(ballRecord);
 
     let nextStrikerId = strikerId;
     let nextNonStrikerId = nonStrikerId;
@@ -721,7 +1031,7 @@ export default function App() {
     let nextIsFreeHitActive = isFreeHitActive;
 
     // Handle wicket out
-    if (gotOut) {
+    if (gotOut && ballData.wicketType === 'Retired') {
       if (ballData.wicketPlayerId === strikerId) {
         nextStrikerId = '';
       } else if (ballData.wicketPlayerId === nonStrikerId) {
@@ -743,23 +1053,6 @@ export default function App() {
       nextNonStrikerId = temp;
     }
 
-    // Check how many OTHER batsmen have not finished their quota (which means they are not out, not retired, and balls faced < limit)
-    const otherBattersNotFinishedCount = updatedBatters.filter(
-      (b) => b.playerId !== strikerId && !b.isOut && !b.howOut.includes('Retired') && b.ballsFaced < updatedInnings.batsmanBallLimit
-    ).length;
-
-    // Batsman retirement limit
-    let hasRetired = false;
-    if (strikerStats.ballsFaced >= updatedInnings.batsmanBallLimit && !gotOut) {
-      if (otherBattersNotFinishedCount > 0) {
-        strikerStats.isOut = true;
-        strikerStats.howOut = 'Retired (Limit Reached)';
-        // Considers retired, but does NOT count as a wicket (user request: "When a Batsman reaches his Ball Limit, then consider then retired but do not count then as wickets")
-        nextStrikerId = '';
-        hasRetired = true;
-      }
-    }
-
     // Extras update logic (done before over complete check so nextIsFreeHitActive is ready)
     if (ballData.ballType === 'Wide' || ballData.ballType === 'NoBall') {
       nextConsecutiveExtras = consecutiveExtras + 1;
@@ -773,23 +1066,43 @@ export default function App() {
       nextConsecutiveExtras = 0;
     }
 
-    // Over completed check (now incorporates nextIsFreeHitActive deferment)
-    let isOverCompleted = countsTowardsBowlerBalls && (ballNumInOver === 6);
-    if (isOverCompleted && nextIsFreeHitActive) {
-      // Defer over completion to record the free hit within the same over
-      isOverCompleted = false;
-    }
-    if (ballData.ballType === 'FreeHit' && ballNumInOver === 6 && !nextIsFreeHitActive) {
-      isOverCompleted = true;
+    // Over completed check is now manually decided by the scorer via 'END OVER' button
+    let isOverCompleted = false;
+
+    // Batsman retirement limit check (after all strike rotations are done)
+    let hasRetired = false;
+    let retiredPlayerNames: string[] = [];
+
+    const nextStrikerStats = nextStrikerId ? updatedBatters.find((b) => b.playerId === nextStrikerId) : null;
+    const nextNonStrikerStats = nextNonStrikerId ? updatedBatters.find((b) => b.playerId === nextNonStrikerId) : null;
+
+    // Check striker limit
+    if (nextStrikerStats && nextStrikerStats.ballsFaced >= updatedInnings.batsmanBallLimit && !gotOut) {
+      if (nextIsFreeHitActive) {
+        // "If Ball limit is reached for the Striker who is supposed to face the free hit, then allow"
+      } else {
+        const eligibleCount = updatedBatters.filter((b) => !b.isOut && !b.howOut.includes('Retired')).length;
+        if (eligibleCount > 1) {
+          nextStrikerStats.isOut = true;
+          nextStrikerStats.howOut = 'Retired (Limit Reached)';
+          nextStrikerId = '';
+          hasRetired = true;
+          retiredPlayerNames.push(nextStrikerStats.playerName);
+        }
+      }
     }
 
-    if (isOverCompleted) {
-      if (nextStrikerId && nextNonStrikerId && !isSoloActive) {
-        const temp = nextStrikerId;
-        nextStrikerId = nextNonStrikerId;
-        nextNonStrikerId = temp;
+    // Check non-striker limit
+    if (nextNonStrikerStats && nextNonStrikerStats.ballsFaced >= updatedInnings.batsmanBallLimit) {
+      // "if the Non striker reached the ball limit then retire the player."
+      const currentEligibleCount = updatedBatters.filter((b) => !b.isOut && !b.howOut.includes('Retired')).length;
+      if (currentEligibleCount > 1) {
+        nextNonStrikerStats.isOut = true;
+        nextNonStrikerStats.howOut = 'Retired (Limit Reached)';
+        nextNonStrikerId = '';
+        hasRetired = true;
+        retiredPlayerNames.push(nextNonStrikerStats.playerName);
       }
-      nextBowlerId = '';
     }
 
     // Force-strike and partner assignment if solo mode (exactly 1 eligible batter left)
@@ -817,6 +1130,9 @@ export default function App() {
     updatedInnings.bowlers = updatedBowlers;
 
     let isCompletedInnings = updatedInnings.ballsBowledTotal >= (matchOvers * 6);
+    if (isCompletedInnings && nextIsFreeHitActive && eligibleBatters.length > 0) {
+      isCompletedInnings = false;
+    }
 
     if (eligibleBatters.length === 0) {
       isCompletedInnings = true;
@@ -870,8 +1186,10 @@ export default function App() {
     }
 
     // Warning alerts
-    if (hasRetired) {
-      alert(`Batter ${strikerStats.playerName} has hit the retirement limit of ${updatedInnings.batsmanBallLimit} balls! Assign a new batsman.`);
+    if (retiredPlayerNames.length > 0) {
+      retiredPlayerNames.forEach((name) => {
+        alert(`Batter ${name} has hit the retirement limit of ${updatedInnings.batsmanBallLimit} balls! Assign a new batsman.`);
+      });
     }
     if (isOverCompleted) {
       alert(`Over complete! Please select a new bowler.`);
@@ -1028,10 +1346,10 @@ export default function App() {
   const isSpecialSingleActive = selectedInnings ? eligibleBatters.length === 1 : false;
 
   const activeStriker = selectedInnings
-    ? (selectedInnings.batters.find((b) => b.playerId === strikerId && !(b.ballsFaced >= selectedInnings.batsmanBallLimit && !isSpecialSingleActive)) || null)
+    ? (selectedInnings.batters.find((b) => b.playerId === strikerId && !b.isOut && !b.howOut.includes('Retired')) || null)
     : null;
   const activeNonStriker = selectedInnings
-    ? (selectedInnings.batters.find((b) => b.playerId === nonStrikerId && !(b.ballsFaced >= selectedInnings.batsmanBallLimit && !isSpecialSingleActive)) || null)
+    ? (selectedInnings.batters.find((b) => b.playerId === nonStrikerId && !b.isOut && !b.howOut.includes('Retired')) || null)
     : null;
   
   let activeBowler: BowlerStats | null = null;
@@ -1082,7 +1400,7 @@ export default function App() {
     return '';
   };
 
-  const ballsFacedLimit = currentBattingTeam?.batsmanBallLimit || 24;
+  const ballsFacedLimit = selectedInnings?.batsmanBallLimit || matchBatsmanBallLimit || 24;
 
   return (
     <div className="min-h-screen bg-[#F8FAFC] flex flex-col font-sans select-none" id="cricket-app-container">
@@ -1379,6 +1697,11 @@ export default function App() {
                 wicketKeeper2Id={selectedInnings.wicketKeeper2Id}
                 isSpecialSingleActive={isSpecialSingleActive}
                 matchOvers={matchOvers}
+                onSelectBallToEdit={(ball, idx) => {
+                  setSelectedBallToEdit(ball);
+                  setSelectedBallIndex(idx);
+                  setIsEditBallModalOpen(true);
+                }}
               />
             )}
 
@@ -1405,6 +1728,8 @@ export default function App() {
                 onChangeWicketKeeper2={(id) => handleUpdateWicketKeeper(2, id)}
                 currentOverNumber={Math.floor(selectedInnings.ballsBowledTotal / 6) + 1}
                 isSpecialSingleActive={isSpecialSingleActive}
+                onEndOver={handleEndOver}
+                currentOverBalls={selectedInnings.currentOverBalls}
               />
             )}
           </div>
@@ -1488,6 +1813,21 @@ export default function App() {
           setIsExportModalOpen(false);
           setExportMatchData(null);
         }}
+      />
+
+      {/* Dynamic Ball Editor Modal overlay */}
+      <EditBallModal
+        isOpen={isEditBallModalOpen}
+        onClose={() => {
+          setIsEditBallModalOpen(false);
+          setSelectedBallToEdit(null);
+          setSelectedBallIndex(-1);
+        }}
+        ball={selectedBallToEdit}
+        ballIndex={selectedBallIndex}
+        onSave={handleSaveEditedBall}
+        battingPlayers={currentBattingTeam?.players ?? []}
+        fieldingPlayers={currentBowlingTeam?.players ?? []}
       />
 
       {/* Basic brand attribution */}

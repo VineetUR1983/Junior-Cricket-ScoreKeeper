@@ -115,9 +115,16 @@ export default function MatchHistory({ inningsList, currentInningsIndex }: Match
                           </p>
                         </div>
                       </div>
-                      <span className="text-[10px] text-slate-400 font-black font-mono">
-                        BALL {ball.ballNumInOver}
-                      </span>
+                      <div className="text-right flex flex-col items-end gap-1 shrink-0">
+                        {ball.cumulativeRuns !== undefined && (
+                          <span className="text-xs text-slate-800 font-extrabold font-mono bg-slate-50 px-2 py-0.5 rounded-lg border border-slate-200">
+                             {ball.cumulativeRuns}/{ball.cumulativeWickets ?? 0}
+                          </span>
+                        )}
+                        <span className="text-[10px] text-slate-400 font-black font-mono">
+                          BALL {ball.ballNumInOver > 0 ? ball.ballNumInOver : 'Extra'}
+                        </span>
+                      </div>
                     </div>
                   );
                 })}

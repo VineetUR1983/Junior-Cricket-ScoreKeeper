@@ -124,6 +124,13 @@ export default function SquadManager({
     onSaveTeams(updated);
   };
 
+  const handleUpdateTeamBallLimit = (limit: number) => {
+    const updated = [...localTeams] as [Team, Team];
+    updated[activeTab] = { ...updated[activeTab], batsmanBallLimit: isNaN(limit) ? 24 : limit };
+    setLocalTeams(updated);
+    onSaveTeams(updated);
+  };
+
   // Add player to active match list
   const handleAddPlayer = (e: React.FormEvent) => {
     e.preventDefault();
@@ -183,10 +190,11 @@ export default function SquadManager({
   // Load a Master Profile directly into active match
   const handleLoadMasterToActive = (profile: MasterTeamProfile, targetIdx: 0 | 1) => {
     const updated = [...localTeams] as [Team, Team];
+    const currentLimit = updated[targetIdx]?.batsmanBallLimit || matchBatsmanBallLimit || 24;
     updated[targetIdx] = {
       name: profile.name,
       players: profile.players.map(p => ({ ...p })), // clone players
-      batsmanBallLimit: matchBatsmanBallLimit
+      batsmanBallLimit: currentLimit
     };
     setLocalTeams(updated);
     onSaveTeams(updated);
@@ -658,6 +666,84 @@ export default function SquadManager({
                   <Save className="w-4 h-4 text-indigo-600" />
                   Save active match lineup as a Master Profile
                 </button>
+              </div>
+            </div>
+
+            {/* Team-level Batsman Ball Limit Section */}
+            <div className="bg-indigo-50/20 rounded-2xl border border-indigo-100 p-4.5 space-y-3.5 mt-4" id="team-ball-limit-control">
+              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+                <div>
+                  <h4 className="font-extrabold text-xs text-indigo-900 tracking-tight flex items-center gap-1.5">
+                    <span>⚡ Team-Level Batsman Ball Limit Override</span>
+                    <span className="text-[10px] bg-indigo-100 text-indigo-750 font-bold px-2 py-0.5 rounded-full">
+                      Current: {activeTeam.batsmanBallLimit || matchBatsmanBallLimit || 24} balls
+                    </span>
+                  </h4>
+                  <p className="text-[10px] text-slate-500 mt-1">
+                    Set a different maximum balls limit each batsman of {activeTeam.name || `Team ${activeTab === 0 ? 'A' : 'B'}`} can play before retiring.
+                  </p>
+                </div>
+                
+                {/* Auto Recommendation Calc */}
+                {(() => {
+                  const pCount = activeTeam.players.length;
+                  const rec = Math.max(1, Math.round((matchOvers * 6) / Math.max(1, pCount)));
+                  return (
+                    <div className="bg-white p-2.5 rounded-xl border border-indigo-100 flex items-center gap-3 shrink-0 shadow-3xs">
+                      <div className="text-left">
+                        <p className="text-[8px] font-black text-indigo-650 uppercase tracking-wider">Dynamic Suggestion</p>
+                        <p className="text-[10px] font-bold text-slate-700">
+                          {pCount} Players: <span className="text-indigo-600 font-extrabold">{rec} Balls</span>
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => handleUpdateTeamBallLimit(rec)}
+                        className="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-[9px] font-black uppercase tracking-wider transition-colors cursor-pointer"
+                      >
+                        Apply Suggestion
+                      </button>
+                    </div>
+                  );
+                })()}
+              </div>
+
+              <div className="flex flex-wrap gap-2 items-center">
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mr-1">Quick Select:</span>
+                {[10, 15, 20, 24, 30].map((limit) => {
+                  const isSelected = (activeTeam.batsmanBallLimit || matchBatsmanBallLimit || 24) === limit;
+                  return (
+                    <button
+                      key={limit}
+                      type="button"
+                      onClick={() => handleUpdateTeamBallLimit(limit)}
+                      className={`py-1.5 px-3 text-[11px] font-extrabold rounded-lg border transition-all cursor-pointer ${
+                        isSelected
+                          ? 'bg-indigo-600 border-indigo-600 text-white shadow-2xs'
+                          : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                      }`}
+                    >
+                      {limit} Balls
+                    </button>
+                  );
+                })}
+
+                {/* Custom Ball input */}
+                <div className="flex items-center gap-1.5 ml-auto">
+                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Custom:</span>
+                  <input
+                    type="number"
+                    min={1}
+                    max={120}
+                    value={activeTeam.batsmanBallLimit || ''}
+                    placeholder="e.g. 25"
+                    onChange={(e) => {
+                      const val = parseInt(e.target.value);
+                      handleUpdateTeamBallLimit(val);
+                    }}
+                    className="w-16 px-2 py-1 bg-white border border-slate-250 rounded-lg text-xs font-black text-slate-800 text-center focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500"
+                  />
+                </div>
               </div>
             </div>
 

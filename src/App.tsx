@@ -683,7 +683,7 @@ export default function App() {
     const initialInnings: Innings = {
       battingTeamIndex: battingTeamIdx,
       bowlingTeamIndex: bowlingTeamIdx,
-      batsmanBallLimit: matchBatsmanBallLimit,
+      batsmanBallLimit: teamA.batsmanBallLimit || matchBatsmanBallLimit || 24,
       totalRuns: 0,
       totalWickets: 0,
       ballsBowledTotal: 0,
@@ -747,7 +747,7 @@ export default function App() {
     const initialInnings: Innings = {
       battingTeamIndex: battingTeamIdx,
       bowlingTeamIndex: bowlingTeamIdx,
-      batsmanBallLimit: matchBatsmanBallLimit,
+      batsmanBallLimit: teamB.batsmanBallLimit || matchBatsmanBallLimit || 24,
       totalRuns: 0,
       totalWickets: 0,
       ballsBowledTotal: 0,

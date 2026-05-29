@@ -12,9 +12,10 @@ interface ScorecardExportProps {
   onClose: () => void;
   teams: [Team, Team];
   inningsList: [Innings | null, Innings | null];
+  manuallySelectedWinnerIndex?: number | null;
 }
 
-export default function ScorecardExport({ isOpen, onClose, teams, inningsList }: ScorecardExportProps) {
+export default function ScorecardExport({ isOpen, onClose, teams, inningsList, manuallySelectedWinnerIndex }: ScorecardExportProps) {
   const [copiedText, setCopiedText] = useState(false);
 
   if (!isOpen) return null;
@@ -42,19 +43,23 @@ export default function ScorecardExport({ isOpen, onClose, teams, inningsList }:
     if (!first) return 'Match in progress';
     if (!second) return `${teams[first.battingTeamIndex].name} finished their innings. Waiting for 2nd innings to start.`;
 
-    const formatA = teams[first.battingTeamIndex].name;
     const formatB = teams[second.battingTeamIndex].name;
 
     if (second.isCompleted) {
-      if (second.totalRuns > first.totalRuns) {
-        return `${formatB} won by ${second.totalRuns - first.totalRuns} runs`;
-      } else if (first.totalRuns > second.totalRuns) {
-        return `${formatA} won by ${first.totalRuns - second.totalRuns} runs`;
-      } else {
-        return `Match tied (Equal Totals)`;
+      if (manuallySelectedWinnerIndex === undefined || manuallySelectedWinnerIndex === null) {
+        return 'Awaiting Scorer Verification & Winner Selection';
       }
+      if (manuallySelectedWinnerIndex === -1) {
+        return 'Match tied (Equal Totals)';
+      }
+      const winnerName = teams[manuallySelectedWinnerIndex].name;
+      const firstGrand = first.totalRuns + second.totalWickets * 4;
+      const secondGrand = second.totalRuns + first.totalWickets * 4;
+      const runDiff = Math.abs(firstGrand - secondGrand);
+      return `${winnerName} won by ${runDiff} runs`;
     }
-    return `${formatB} is chasing target of ${first.totalRuns + 1} runs (${second.totalRuns}/${second.totalWickets}, ${formatOvers(second.ballsBowledTotal)} ov)`;
+    const displayTarget = first.totalRuns + (second.totalWickets * 4) - (first.totalWickets * 4) + 1;
+    return `${formatB} is chasing target of ${displayTarget} runs (${second.totalRuns}/${second.totalWickets}, ${formatOvers(second.ballsBowledTotal)} ov)`;
   };
 
   // Generate ASCII Plain Text Scorecard
@@ -75,9 +80,12 @@ export default function ScorecardExport({ isOpen, onClose, teams, inningsList }:
       if (!innings) return;
       const batTeam = teams[innings.battingTeamIndex].name;
       const bowlTeam = teams[innings.bowlingTeamIndex].name;
+      const opponentInnings = inningsList[1 - idx];
+      const opponentWkts = opponentInnings ? opponentInnings.totalWickets : 0;
+      const penaltyRuns = opponentWkts * 4;
 
       out += `>> INNINGS ${idx + 1}: ${batTeam.toUpperCase()} (BATTING)\n`;
-      out += `Total Score: ${innings.totalRuns}/${innings.totalWickets} in ${formatOvers(innings.ballsBowledTotal)} overs\n`;
+      out += `Total Score: ${innings.totalRuns + penaltyRuns}/${innings.totalWickets} (Batting: ${innings.totalRuns} + Penalty: +${penaltyRuns}) in ${formatOvers(innings.ballsBowledTotal)} overs\n`;
       out += `${thinDivider}\n`;
       out += `BATTER              STATUS                      R   B   4s  6s   S/R\n`;
       out += `${thinDivider}\n`;
@@ -98,11 +106,8 @@ export default function ScorecardExport({ isOpen, onClose, teams, inningsList }:
       const extrasTotal = innings.extras.wides + innings.extras.noBalls + innings.extras.byes + innings.extras.legByes;
       out += `${thinDivider}\n`;
       out += `EXTRAS TOTAL: ${extrasTotal} (Wides ${innings.extras.wides}, No-Balls ${innings.extras.noBalls}, Byes ${innings.extras.byes}, Leg-Byes ${innings.extras.legByes})\n`;
-      const opponentInnings = inningsList[1 - idx];
-      const opponentWkts = opponentInnings ? opponentInnings.totalWickets : 0;
-      const penaltyRuns = opponentWkts * 4;
       out += `OPPOSITION WKT PENALTY  : +${penaltyRuns} (4 runs x ${opponentWkts} wicket(s) lost by ${bowlTeam})\n`;
-      out += `TOTAL MATCH RUNS: ${innings.totalRuns} (${innings.totalWickets} wickets, ${formatOvers(innings.ballsBowledTotal)} overs)\n`;
+      out += `TOTAL MATCH RUNS: ${innings.totalRuns + penaltyRuns} (${innings.totalWickets} wickets, ${formatOvers(innings.ballsBowledTotal)} overs)\n`;
       out += `${thinDivider}\n\n`;
 
       out += `>> BOWLING STATISTICS: ${bowlTeam.toUpperCase()}\n`;
@@ -308,7 +313,7 @@ export default function ScorecardExport({ isOpen, onClose, teams, inningsList }:
               <p style="margin: 0; font-size: 11px; color: #64748b;">Opposing bowler squad: ${bowlTeam}</p>
             </div>
             <div class="innings-total-bubble">
-              <span class="total-score-val">${innings.totalRuns}/${innings.totalWickets}</span>
+              <span class="total-score-val">${innings.totalRuns + opponentWkts * 4}/${innings.totalWickets}</span>
               <span class="total-overs-label">${formatOvers(innings.ballsBowledTotal)} Overs</span>
             </div>
           </div>
@@ -344,9 +349,9 @@ export default function ScorecardExport({ isOpen, onClose, teams, inningsList }:
               </tr>
               <tr class="totals-row">
                 <td colspan="2" style="font-size: 11px; text-transform: uppercase;">Team Innings Total Cumulative</td>
-                <td class="text-right font-black" style="font-size: 14px; color: #4f46e5;">${innings.totalRuns}</td>
+                <td class="text-right font-black" style="font-size: 14px; color: #4f46e5;">${innings.totalRuns + opponentWkts * 4}</td>
                 <td colspan="4" style="font-size: 10px; color: #64748b;">
-                  For ${innings.totalWickets} wickets in ${formatOvers(innings.ballsBowledTotal)} completed overs block
+                  (Batting: ${innings.totalRuns} + Opposition Penalty: +${opponentWkts * 4}) for ${innings.totalWickets} wickets in ${formatOvers(innings.ballsBowledTotal)} completed overs block
                 </td>
               </tr>
             </tbody>

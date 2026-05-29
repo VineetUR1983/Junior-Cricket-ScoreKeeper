@@ -18,6 +18,7 @@ interface ScoreboardProps {
   consecutiveExtras: number;
   ballLimit: number;
   targetRuns?: number; // Target to chase in 2nd innings
+  opponentWickets?: number; // Opposition wickets lost
   wicketKeeper1Id: string;
   wicketKeeper2Id: string;
   isSpecialSingleActive?: boolean;
@@ -36,6 +37,7 @@ export default function Scoreboard({
   consecutiveExtras,
   ballLimit,
   targetRuns,
+  opponentWickets = 0,
   wicketKeeper1Id,
   wicketKeeper2Id,
   isSpecialSingleActive = false,
@@ -92,10 +94,10 @@ export default function Scoreboard({
             <span>Chasing Target: <strong className="text-emerald-990 font-black">{targetRuns} Runs</strong></span>
           </div>
           <div>
-            {innings.totalRuns >= targetRuns ? (
+            {(innings.totalRuns + opponentWickets * 4) >= targetRuns ? (
               <span className="bg-emerald-600 text-white px-3 py-1 rounded-full text-[9px] font-black">TARGET ACHIEVED 🎉</span>
             ) : (
-              <span>Need {targetRuns - innings.totalRuns} runs off {(matchOvers * 6) - innings.ballsBowledTotal} balls left</span>
+              <span>Need {targetRuns - (innings.totalRuns + opponentWickets * 4)} runs off {(matchOvers * 6) - innings.ballsBowledTotal} balls left</span>
             )}
           </div>
         </div>
@@ -124,9 +126,14 @@ export default function Scoreboard({
             <h2 className="text-xl font-bold font-sans tracking-tight mt-3 text-indigo-50">{battingTeam.name}</h2>
             
             <div className="flex items-baseline gap-2 mt-2">
-              <span className="text-6xl font-black tracking-tighter" id="scoreboard-total-score">{innings.totalRuns}</span>
+              <span className="text-6xl font-black tracking-tighter" id="scoreboard-total-score">{innings.totalRuns + opponentWickets * 4}</span>
               <span className="text-3xl font-light text-indigo-200">/ {innings.totalWickets}</span>
             </div>
+            {opponentWickets > 0 && (
+              <p className="text-[10px] text-indigo-200/90 font-bold mt-1.5 uppercase tracking-wide">
+                (Batting: {innings.totalRuns} + Opposition Wicket Penalty: +{opponentWickets * 4})
+              </p>
+            )}
           </div>
           
           <div className="text-right">

@@ -82,6 +82,7 @@ export default function App() {
 
   const [currentInningsIndex, setCurrentInningsIndex] = useState<0 | 1 | 2>(0); // 0 = Setup, 1 = 1st Innings, 2 = 2nd Innings
   const [inningsList, setInningsList] = useState<[Innings | null, Innings | null]>([null, null]);
+  const [manuallySelectedWinnerIndex, setManuallySelectedWinnerIndex] = useState<number | null>(null);
 
   // Active playing states (IDs for easy lookup)
   const [strikerId, setStrikerId] = useState<string>('');
@@ -160,6 +161,7 @@ export default function App() {
       isFreeHitActive?: boolean;
       matchOvers?: number;
       matchBatsmanBallLimit?: number;
+      manuallySelectedWinnerIndex?: number | null;
     }
   ) => {
     const nextTeams = updates.teams !== undefined ? updates.teams : teams;
@@ -172,6 +174,7 @@ export default function App() {
     const nextIsFreeHitActive = updates.isFreeHitActive !== undefined ? updates.isFreeHitActive : isFreeHitActive;
     const nextMatchOvers = updates.matchOvers !== undefined ? updates.matchOvers : matchOvers;
     const nextMatchBatsmanBallLimit = updates.matchBatsmanBallLimit !== undefined ? updates.matchBatsmanBallLimit : matchBatsmanBallLimit;
+    const nextManuallySelectedWinnerIndex = updates.manuallySelectedWinnerIndex !== undefined ? updates.manuallySelectedWinnerIndex : manuallySelectedWinnerIndex;
 
     let status: 'setup' | 'active' | 'completed' = 'active';
     if (nextCurrentInningsIndex === 0) {
@@ -192,6 +195,7 @@ export default function App() {
       status,
       matchOvers: nextMatchOvers,
       matchBatsmanBallLimit: nextMatchBatsmanBallLimit,
+      manuallySelectedWinnerIndex: nextManuallySelectedWinnerIndex,
     });
   };
 
@@ -270,6 +274,7 @@ export default function App() {
     setConsecutiveExtras(match.consecutiveExtras || 0);
     setIsFreeHitActive(match.isFreeHitActive || false);
     setCurrentInningsIndex(match.currentInningsIndex || 0);
+    setManuallySelectedWinnerIndex(match.manuallySelectedWinnerIndex !== undefined ? match.manuallySelectedWinnerIndex : null);
     setUndoStack([]);
 
     if (forceReopenIdx !== -1) {
@@ -351,6 +356,7 @@ export default function App() {
       setConsecutiveExtras(stateObj.consecutiveExtras || 0);
       setIsFreeHitActive(stateObj.isFreeHitActive || false);
       setTeams(stateObj.teams);
+      setManuallySelectedWinnerIndex(stateObj.manuallySelectedWinnerIndex !== undefined ? stateObj.manuallySelectedWinnerIndex : null);
       setUndoStack([]);
 
       if (activeMatchId) {
@@ -370,6 +376,7 @@ export default function App() {
       bowlerId,
       consecutiveExtras,
       isFreeHitActive,
+      manuallySelectedWinnerIndex,
     });
     setUndoStack((prev) => [...prev, currentSnapshot]);
   };
@@ -385,6 +392,7 @@ export default function App() {
     setBowlerId(parsed.bowlerId);
     setConsecutiveExtras(parsed.consecutiveExtras);
     setIsFreeHitActive(parsed.isFreeHitActive);
+    setManuallySelectedWinnerIndex(parsed.manuallySelectedWinnerIndex !== undefined ? parsed.manuallySelectedWinnerIndex : null);
 
     setUndoStack((prev) => prev.slice(0, -1));
 
@@ -396,6 +404,7 @@ export default function App() {
         bowlerId: parsed.bowlerId,
         consecutiveExtras: parsed.consecutiveExtras,
         isFreeHitActive: parsed.isFreeHitActive,
+        manuallySelectedWinnerIndex: parsed.manuallySelectedWinnerIndex !== undefined ? parsed.manuallySelectedWinnerIndex : null,
       });
     }
   };
@@ -633,6 +642,153 @@ export default function App() {
     alert('Current over completed! Strike rotated and bowler unassigned successfully.');
   };
 
+  const propagateStrikerRotation = (
+    balls: BallRecord[],
+    startIndex: number,
+    battingTeam: Team,
+    batsmanBallLimit: number
+  ): { updatedBalls: BallRecord[]; finalStrikerId: string; finalNonStrikerId: string } => {
+    const updatedBalls = [...balls];
+    const ballsFacedMap: { [playerId: string]: number } = {};
+    const outBattersSet = new Set<string>();
+
+    // 1. Initialize ballsFaced counts and dismissals/retirements up to startIndex
+    for (let i = 0; i < startIndex; i++) {
+      const b = updatedBalls[i];
+      if (b.ballType !== 'FreeHit' && b.strikerId) {
+        ballsFacedMap[b.strikerId] = (ballsFacedMap[b.strikerId] || 0) + 1;
+      }
+      if (b.isWicket || b.wicketType !== undefined) {
+        if (b.wicketPlayerId) {
+          outBattersSet.add(b.wicketPlayerId);
+        }
+      }
+      if (b.strikerId && (ballsFacedMap[b.strikerId] || 0) >= batsmanBallLimit) {
+        outBattersSet.add(b.strikerId);
+      }
+      if (b.nonStrikerId && (ballsFacedMap[b.nonStrikerId] || 0) >= batsmanBallLimit) {
+        outBattersSet.add(b.nonStrikerId);
+      }
+    }
+
+    // 2. Initialize simulation striker and non-striker at startIndex
+    let currStrikerId = startIndex < updatedBalls.length ? updatedBalls[startIndex].strikerId : '';
+    let currNonStrikerId = startIndex < updatedBalls.length ? updatedBalls[startIndex].nonStrikerId : '';
+    let previousOverNum = startIndex < updatedBalls.length ? updatedBalls[startIndex].overNum : -1;
+
+    // 3. Keep simulating forward from startIndex to the end of the balls list
+    for (let i = startIndex; i < updatedBalls.length; i++) {
+      const b = { ...updatedBalls[i] };
+      const origStrikerId = b.strikerId;
+      const origNonStrikerId = b.nonStrikerId;
+
+      // Handle transitions between overs
+      if (previousOverNum !== -1 && b.overNum !== previousOverNum) {
+        const eligibleCount = battingTeam.players.filter(
+          (p) => !outBattersSet.has(p.id) && (ballsFacedMap[p.id] || 0) < batsmanBallLimit
+        ).length;
+        const isSoloActiveAtOverEnd = eligibleCount === 1;
+        if (currStrikerId && currNonStrikerId && !isSoloActiveAtOverEnd) {
+          const temp = currStrikerId;
+          currStrikerId = currNonStrikerId;
+          currNonStrikerId = temp;
+        }
+      }
+      previousOverNum = b.overNum;
+
+      if (i > startIndex) {
+        // Detect and resolve manual replacements / batsman incoming assignments
+        const activeSim = new Set([currStrikerId, currNonStrikerId].filter((id) => id !== ''));
+        const newBatters = [];
+        if (origStrikerId && !activeSim.has(origStrikerId)) {
+          newBatters.push(origStrikerId);
+        }
+        if (origNonStrikerId && !activeSim.has(origNonStrikerId) && origNonStrikerId !== origStrikerId) {
+          newBatters.push(origNonStrikerId);
+        }
+
+        if (newBatters.length > 0) {
+          // Identify simulation player who was replaced
+          const replacedId = [currStrikerId, currNonStrikerId].find(
+            (id) => id && id !== origStrikerId && id !== origNonStrikerId
+          );
+          if (replacedId) {
+            if (currStrikerId === replacedId) {
+              currStrikerId = newBatters.shift() || '';
+            } else {
+              currNonStrikerId = newBatters.shift() || '';
+            }
+          }
+
+          while (newBatters.length > 0) {
+            if (currStrikerId === '') {
+              currStrikerId = newBatters.shift() || '';
+            } else if (currNonStrikerId === '') {
+              currNonStrikerId = newBatters.shift() || '';
+            } else {
+              break;
+            }
+          }
+        }
+
+        b.strikerId = currStrikerId;
+        b.nonStrikerId = currNonStrikerId;
+      }
+
+      // Count balls faced
+      const countsTowardsBatsmanBalls = b.ballType !== 'FreeHit';
+      if (currStrikerId && countsTowardsBatsmanBalls) {
+        ballsFacedMap[currStrikerId] = (ballsFacedMap[currStrikerId] || 0) + 1;
+      }
+
+      // Handle wickets / dismissals
+      const gotOut = b.isWicket || b.wicketType !== undefined;
+      const dismissedPlayerId = b.wicketPlayerId || currStrikerId;
+      if (gotOut && dismissedPlayerId) {
+        outBattersSet.add(dismissedPlayerId);
+        if (dismissedPlayerId === currStrikerId) {
+          currStrikerId = '';
+        } else if (dismissedPlayerId === currNonStrikerId) {
+          currNonStrikerId = '';
+        }
+      }
+
+      // Handle compulsory retirements upon hitting the ball limit
+      if (currStrikerId && (ballsFacedMap[currStrikerId] || 0) >= batsmanBallLimit) {
+        outBattersSet.add(currStrikerId);
+        currStrikerId = '';
+      }
+      if (currNonStrikerId && (ballsFacedMap[currNonStrikerId] || 0) >= batsmanBallLimit) {
+        outBattersSet.add(currNonStrikerId);
+        currNonStrikerId = '';
+      }
+
+      // Calculate strike rotation for this ball
+      const eligibleCount = battingTeam.players.filter(
+        (p) => !outBattersSet.has(p.id) && (ballsFacedMap[p.id] || 0) < batsmanBallLimit
+      ).length;
+      const isSoloActive = eligibleCount === 1;
+
+      const isByeOrLegBye = b.extraType === 'Bye' || b.extraType === 'LegBye';
+      const physicalRuns = isByeOrLegBye ? b.runsFromExtras : b.runsFromBat;
+      const rotatingRuns = (physicalRuns % 2) !== 0;
+
+      if (rotatingRuns && currStrikerId && currNonStrikerId && !gotOut && !isSoloActive) {
+        const temp = currStrikerId;
+        currStrikerId = currNonStrikerId;
+        currNonStrikerId = temp;
+      }
+
+      updatedBalls[i] = b;
+    }
+
+    return {
+      updatedBalls,
+      finalStrikerId: currStrikerId,
+      finalNonStrikerId: currNonStrikerId,
+    };
+  };
+
   const handleSaveEditedBall = (updatedBall: BallRecord) => {
     saveSnapshot();
 
@@ -640,6 +796,7 @@ export default function App() {
     const innings = inningsList[inningsIdx];
     if (!innings || !currentBattingTeam || !currentBowlingTeam) return;
 
+    // 1. Swap the edited ball inside local arrays first
     const updatedBalls = innings.balls.map((b) => {
       if (updatedBall.ballId && b.ballId === updatedBall.ballId) {
         return updatedBall;
@@ -647,29 +804,55 @@ export default function App() {
       return b;
     });
 
-    const updatedCurrentOverBalls = innings.currentOverBalls.map((b) => {
-      if (updatedBall.ballId && b.ballId === updatedBall.ballId) {
-        return updatedBall;
-      }
-      return b;
+    const ballIndex = updatedBalls.findIndex((b) => b.ballId === updatedBall.ballId);
+
+    // 2. Propagate striker rotation starting from this ball
+    const {
+      updatedBalls: propagatedBalls,
+      finalStrikerId,
+      finalNonStrikerId,
+    } = propagateStrikerRotation(
+      updatedBalls,
+      ballIndex !== -1 ? ballIndex : 0,
+      currentBattingTeam,
+      innings.batsmanBallLimit || 24
+    );
+
+    // 3. Re-map current over balls using the fully propagated balls array
+    const updatedCurrentOverBalls = innings.currentOverBalls.map((cob) => {
+      const matchedBall = propagatedBalls.find((b) => b.ballId === cob.ballId);
+      return matchedBall ? { ...matchedBall } : cob;
     });
 
     const updatedInnings = {
       ...innings,
-      balls: updatedBalls,
+      balls: propagatedBalls,
       currentOverBalls: updatedCurrentOverBalls,
     };
 
     const recalculated = recalculateInnings(updatedInnings, currentBattingTeam, currentBowlingTeam);
+
+    // 4. Update core state variables if it's the active innings
+    if (inningsIdx === currentInningsIndex - 1) {
+      setStrikerId(finalStrikerId);
+      setNonStrikerId(finalNonStrikerId);
+      recalculated.activeStrikerId = finalStrikerId;
+      recalculated.activeNonStrikerId = finalNonStrikerId;
+    }
 
     const updatedInningsList = [...inningsList] as [Innings | null, Innings | null];
     updatedInningsList[inningsIdx] = recalculated;
     setInningsList(updatedInningsList);
 
     if (activeMatchId) {
-      syncStateToFirestore(activeMatchId, {
+      const updatedFields: any = {
         inningsList: updatedInningsList,
-      });
+      };
+      if (inningsIdx === currentInningsIndex - 1) {
+        updatedFields.strikerId = finalStrikerId;
+        updatedFields.nonStrikerId = finalNonStrikerId;
+      }
+      syncStateToFirestore(activeMatchId, updatedFields);
     }
   };
 
@@ -722,6 +905,8 @@ export default function App() {
     setIsFreeHitActive(false);
     setUndoStack([]);
 
+    setManuallySelectedWinnerIndex(null);
+
     syncStateToFirestore(matchId, {
       teams,
       currentInningsIndex: 1,
@@ -733,6 +918,7 @@ export default function App() {
       isFreeHitActive: false,
       matchOvers,
       matchBatsmanBallLimit,
+      manuallySelectedWinnerIndex: null,
     });
   };
 
@@ -1045,8 +1231,12 @@ export default function App() {
     );
     const isSoloActive = currentBattersNotFinished.length === 1;
 
-    // Rotating runs (not on wickets and not in solo mode)
-    const rotatingRuns = ballData.runsFromBat === 1 || ballData.runsFromBat === 3 || ballData.runsFromBat === 5;
+    // Runs of Bat determines strike rotation: odd runs strike rotates, even runs strike remains with the striker.
+    // Also including Byes/Leg Byes which are physically run.
+    const isByeOrLegBye = ballData.extraType === 'Bye' || ballData.extraType === 'LegBye';
+    const physicalRuns = isByeOrLegBye ? ballData.runsFromExtras : ballData.runsFromBat;
+    const rotatingRuns = (physicalRuns % 2) !== 0;
+
     if (rotatingRuns && nextStrikerId && nextNonStrikerId && !gotOut && !isSoloActive) {
       const temp = nextStrikerId;
       nextStrikerId = nextNonStrikerId;
@@ -1148,7 +1338,7 @@ export default function App() {
     if (isCompletedInnings) {
       updatedInnings.isCompleted = true;
       if (currentInningsIndex === 1) {
-        alert(`1st Innings completed! Target score is ${(updatedInnings.totalRuns + 1)} runs.`);
+        alert(`1st Innings completed! Target score is ${(updatedInnings.totalRuns + 1)} runs. (Note: Opposition Wicket Penalties of +4 runs per wicket will be dynamically added as wickets are lost during the chase)`);
       } else {
         alert(`Match complete! Full stats compiled below.`);
       }
@@ -1301,6 +1491,7 @@ export default function App() {
       setIsFreeHitActive(false);
       setUndoStack([]);
       setActiveMatchId(null);
+      setManuallySelectedWinnerIndex(null);
     }
   };
 
@@ -1385,19 +1576,19 @@ export default function App() {
     const second = inningsList[1];
     if (!first || !second) return '';
 
-    const formatA = teams[first.battingTeamIndex].name;
-    const formatB = teams[second.battingTeamIndex].name;
-
-    if (second.isCompleted) {
-      if (second.totalRuns > first.totalRuns) {
-        return `${formatB} won by ${second.totalRuns - first.totalRuns} runs 🏆`;
-      } else if (first.totalRuns > second.totalRuns) {
-        return `${formatA} won by ${first.totalRuns - second.totalRuns} runs 🏆`;
-      } else {
-        return `Match tied (Equal Totals) 🤝`;
-      }
+    if (manuallySelectedWinnerIndex === null) {
+      return 'Awaiting Scorer Verification & Selection';
     }
-    return '';
+
+    if (manuallySelectedWinnerIndex === -1) {
+      return 'Match tied (Equal Totals) 🤝';
+    }
+
+    const firstGrand = first.totalRuns + second.totalWickets * 4;
+    const secondGrand = second.totalRuns + first.totalWickets * 4;
+    const runDiff = Math.abs(firstGrand - secondGrand);
+    const winnerName = teams[manuallySelectedWinnerIndex].name;
+    return `${winnerName} won by ${runDiff} runs 🏆`;
   };
 
   const ballsFacedLimit = selectedInnings?.batsmanBallLimit || matchBatsmanBallLimit || 24;
@@ -1642,19 +1833,97 @@ export default function App() {
 
             {/* Whole Match Concluded Screen */}
             {inningsList[0]?.isCompleted && inningsList[1]?.isCompleted && (
-              <div className="bg-white border border-slate-205 p-6 rounded-3xl shadow-sm space-y-4 text-center animate-in fade-in duration-300">
+              <div className="bg-white border border-slate-205 p-6 rounded-3xl shadow-sm space-y-6 text-center animate-in fade-in duration-300" id="whole-match-concluded-container">
                 <Trophy className="w-12 h-12 text-indigo-650 mx-auto animate-bounce" />
-                <div>
-                  <p className="text-[10px] uppercase font-black text-slate-450 tracking-widest">CRICKET MATCH DETERMINED</p>
-                  <h2 className="text-xl font-black text-slate-800 tracking-tight mt-1">{getMatchResultsSummary()}</h2>
-                </div>
-                <p className="text-xs text-slate-450 font-semibold max-w-md mx-auto leading-relaxed">
+                
+                {manuallySelectedWinnerIndex === null ? (
+                  <div className="space-y-4 max-w-md mx-auto" id="winner-manual-selection-section">
+                    <div>
+                      <span className="text-[10px] uppercase font-black text-amber-600 tracking-widest bg-amber-50 px-2.5 py-1 rounded-md border border-amber-100">Scorer Verification Action Required</span>
+                      <h2 className="text-base font-black text-slate-800 tracking-tight mt-2" id="verification-title">Verify Scores & Select Winning Team</h2>
+                      <p className="text-xs text-slate-450 font-medium">Review the recorded innings totals and designate the winner manually.</p>
+                    </div>
+
+                    {/* Score comparative card */}
+                    <div className="bg-slate-50 border border-slate-150 rounded-2xl p-4 grid grid-cols-2 divide-x divide-slate-200">
+                      <div className="pr-2 text-center">
+                        <p className="text-[10px] font-bold text-slate-450 truncate uppercase">{teams[inningsList[0]!.battingTeamIndex].name}</p>
+                        <p className="text-lg font-black text-indigo-750 mt-1">{inningsList[0]!.totalRuns + (inningsList[1]!.totalWickets * 4)} runs</p>
+                        <p className="text-[9px] text-slate-500 font-bold">(Batting: {inningsList[0]!.totalRuns}, Wkts lost: {inningsList[0]!.totalWickets})</p>
+                        <p className="text-[9px] text-amber-700 font-black mt-0.5">(Opponent Wkts Penalty: +{inningsList[1]!.totalWickets * 4})</p>
+                      </div>
+                      <div className="pl-2 text-center">
+                        <p className="text-[10px] font-bold text-slate-450 truncate uppercase">{teams[inningsList[1]!.battingTeamIndex].name}</p>
+                        <p className="text-lg font-black text-indigo-750 mt-1">{inningsList[1]!.totalRuns + (inningsList[0]!.totalWickets * 4)} runs</p>
+                        <p className="text-[9px] text-slate-500 font-bold">(Batting: {inningsList[1]!.totalRuns}, Wkts lost: {inningsList[1]!.totalWickets})</p>
+                        <p className="text-[9px] text-amber-700 font-black mt-0.5">(Opponent Wkts Penalty: +{inningsList[0]!.totalWickets * 4})</p>
+                      </div>
+                    </div>
+
+                    {/* Handover manual triggers group */}
+                    <div className="space-y-2 pt-1.5 flex flex-col items-center">
+                      <button
+                        onClick={() => {
+                          setManuallySelectedWinnerIndex(0);
+                          if (activeMatchId) syncStateToFirestore(activeMatchId, { manuallySelectedWinnerIndex: 0 });
+                        }}
+                        className="w-full py-2.5 bg-indigo-50 border border-indigo-200 hover:bg-indigo-600 hover:text-white hover:border-indigo-600 text-indigo-700 rounded-xl text-[11px] font-black uppercase tracking-wider transition-all cursor-pointer flex items-center justify-center gap-1"
+                        id="btn-manual-winner-team-a"
+                      >
+                        Designate {teams[0].name} as Winner
+                      </button>
+                      <button
+                        onClick={() => {
+                          setManuallySelectedWinnerIndex(1);
+                          if (activeMatchId) syncStateToFirestore(activeMatchId, { manuallySelectedWinnerIndex: 1 });
+                        }}
+                        className="w-full py-2.5 bg-indigo-50 border border-indigo-200 hover:bg-indigo-600 hover:text-white hover:border-indigo-600 text-indigo-700 rounded-xl text-[11px] font-black uppercase tracking-wider transition-all cursor-pointer flex items-center justify-center gap-1"
+                        id="btn-manual-winner-team-b"
+                      >
+                        Designate {teams[1].name} as Winner
+                      </button>
+                      <button
+                        onClick={() => {
+                          setManuallySelectedWinnerIndex(-1);
+                          if (activeMatchId) syncStateToFirestore(activeMatchId, { manuallySelectedWinnerIndex: -1 });
+                        }}
+                        className="w-full py-2 border border-slate-200 hover:bg-slate-100 text-slate-500 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all cursor-pointer"
+                        id="btn-manual-winner-tie"
+                      >
+                        Designate Match as Tied / Draw
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-3" id="verified-result-section">
+                    <p className="text-[10px] uppercase font-black text-slate-400 tracking-widest bg-emerald-50 text-emerald-800 px-2.5 py-0.5 rounded-md inline-block border border-emerald-100">Verified Result Selected</p>
+                    <h2 className="text-xl font-black text-slate-800 tracking-tight mt-1" id="verified-result-title">{getMatchResultsSummary()}</h2>
+                    
+                    {/* Re-trigger manual chooser option */}
+                    <div className="pt-1">
+                      <button
+                        onClick={() => {
+                          setManuallySelectedWinnerIndex(null);
+                          if (activeMatchId) syncStateToFirestore(activeMatchId, { manuallySelectedWinnerIndex: null });
+                        }}
+                        className="px-3.5 py-1.5 bg-slate-50 border border-slate-200 text-slate-500 hover:bg-slate-100 rounded-lg text-[9px] uppercase font-bold tracking-wider transition-all cursor-pointer"
+                        id="btn-change-manual-selection"
+                      >
+                        Change Winner Selection
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                <p className="text-xs text-slate-450 font-semibold max-w-sm mx-auto leading-relaxed">
                   The final statistics and rosters have been compiled safely. Standard under-9 custom metrics were fully utilized for calculations.
                 </p>
+
                 <div className="pt-2 flex flex-wrap justify-center gap-3">
                   <button
                     onClick={handleReopenInnings}
                     className="px-6 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-black uppercase text-[10px] tracking-wider rounded-xl inline-flex items-center gap-2 cursor-pointer shadow-xs transition-shadow"
+                    id="btn-reopen-concluded-innings"
                   >
                     <RefreshCw className="w-3.5 h-3.5" />
                     <span>Undo Completion / Resume Match</span>
@@ -1662,16 +1931,23 @@ export default function App() {
                   <button
                     onClick={handleResetMatch}
                     className="px-6 py-2.5 bg-slate-900 border border-slate-900/80 text-white hover:bg-slate-805 font-black uppercase text-[10px] tracking-wider rounded-xl inline-flex items-center gap-2 cursor-pointer shadow-xs transition-shadow"
+                    id="btn-reset-concluded-match"
                   >
                     <RefreshCw className="w-3.5 h-3.5" />
                     <span>Commence new match</span>
                   </button>
                   <button
                     onClick={() => {
-                      setExportMatchData(null);
+                      setExportMatchData({
+                        teams: teams,
+                        inningsList: inningsList,
+                        manuallySelectedWinnerIndex: manuallySelectedWinnerIndex
+                      });
                       setIsExportModalOpen(true);
                     }}
-                    className="px-6 py-2.5 bg-indigo-650 hover:bg-indigo-700 text-white font-black uppercase text-[10px] tracking-wider rounded-xl inline-flex items-center gap-2 cursor-pointer shadow-xs transition-shadow"
+                    className="px-6 py-2.5 bg-indigo-650 hover:bg-indigo-700 text-white font-black uppercase text-[10px] tracking-wider rounded-xl inline-flex items-center gap-2 cursor-pointer shadow-xs transition-shadow disabled:opacity-50 disabled:cursor-not-allowed"
+                    disabled={manuallySelectedWinnerIndex === null}
+                    id="btn-export-concluded-scorecard"
                   >
                     <Share2 className="w-3.5 h-3.5" />
                     <span>Export final scorecard</span>
@@ -1692,7 +1968,8 @@ export default function App() {
                 isFreeHit={isFreeHitActive}
                 consecutiveExtras={consecutiveExtras}
                 ballLimit={ballsFacedLimit}
-                targetRuns={currentInningsIndex === 2 ? (inningsList[0]?.totalRuns || 0) + 1 : undefined}
+                targetRuns={currentInningsIndex === 2 ? (inningsList[0]?.totalRuns || 0) + (inningsList[1]?.totalWickets || 0) * 4 + 1 : undefined}
+                opponentWickets={currentInningsIndex === 1 ? (inningsList[1]?.totalWickets || 0) : (inningsList[0]?.totalWickets || 0)}
                 wicketKeeper1Id={selectedInnings.wicketKeeper1Id}
                 wicketKeeper2Id={selectedInnings.wicketKeeper2Id}
                 isSpecialSingleActive={isSpecialSingleActive}
@@ -1808,6 +2085,7 @@ export default function App() {
       <ScorecardExport
         teams={exportMatchData?.teams ?? teams}
         inningsList={exportMatchData?.inningsList ?? inningsList}
+        manuallySelectedWinnerIndex={exportMatchData?.manuallySelectedWinnerIndex !== undefined ? exportMatchData.manuallySelectedWinnerIndex : manuallySelectedWinnerIndex}
         isOpen={isExportModalOpen}
         onClose={() => {
           setIsExportModalOpen(false);

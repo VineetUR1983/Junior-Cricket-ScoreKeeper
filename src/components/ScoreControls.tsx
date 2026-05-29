@@ -86,10 +86,10 @@ export default function ScoreControls({
   const currentOverLegalBalls = currentOverBalls ? currentOverBalls.filter((b) => b.ballType !== 'FreeHit').length : 0;
 
   React.useEffect(() => {
-    if (currentOverLegalBalls === 6 && currentOverNumber !== dismissedOverForNumber) {
+    if (currentOverLegalBalls === 6 && currentOverNumber !== dismissedOverForNumber && !isFreeHit) {
       setShowEndOverConfirm(true);
     }
-  }, [currentOverLegalBalls, currentOverNumber, dismissedOverForNumber]);
+  }, [currentOverLegalBalls, currentOverNumber, dismissedOverForNumber, isFreeHit]);
 
   // Sync free hit state when active
   React.useEffect(() => {
@@ -237,6 +237,25 @@ export default function ScoreControls({
 
   return (
     <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-sm space-y-6" id="score-controls-panel">
+      {/* Header with Title and Always-Visible Manual End Over Button */}
+      <div className="flex flex-wrap sm:flex-nowrap justify-between items-center gap-3 pb-4 border-b border-slate-100" id="score-controls-header">
+        <div className="flex items-center gap-2">
+          <Settings className="w-5 h-5 text-indigo-600 shrink-0 animate-spin-slow" />
+          <h3 className="text-sm font-black text-slate-800 uppercase tracking-widest font-sans">
+            Score Entry Controls
+          </h3>
+        </div>
+        <button
+          type="button"
+          onClick={() => setShowEndOverConfirm(true)}
+          className="px-4 py-2.5 bg-amber-600 hover:bg-amber-700 active:scale-98 text-white font-extrabold text-xs rounded-xl shadow-md transition-all cursor-pointer flex items-center gap-1.5 shrink-0"
+          title="Manually end the current over at any time"
+          id="btn-global-manual-end-over"
+        >
+          <span>MANUAL END OVER ➔</span>
+        </button>
+      </div>
+
       {/* Block 1: Active Lineup selectors */}
       <div className="bg-slate-50/50 p-5 rounded-2xl border border-slate-200/60" id="roster-selectors">
         <div className="space-y-4">
@@ -411,7 +430,7 @@ export default function ScoreControls({
                 <button
                   type="button"
                   onClick={() => setShowEndOverConfirm(true)}
-                  className="px-3 py-1.5 bg-amber-550 hover:bg-amber-600 text-white font-extrabold text-xs rounded-xl transition-all shadow-xs flex items-center gap-1 cursor-pointer"
+                  className="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white font-extrabold text-xs rounded-xl transition-all shadow-xs flex items-center gap-1 cursor-pointer"
                   title="Force end the current over manually"
                   id="btn-manual-end-over"
                 >
@@ -439,6 +458,30 @@ export default function ScoreControls({
                 )}
               </div>
             </div>
+
+            {/* Inline Confirm & End Over banner */}
+            {currentOverLegalBalls >= 6 && !isFreeHit && (
+              <div className="bg-amber-50 border-2 border-amber-300 p-4 rounded-2xl flex flex-col sm:flex-row items-center justify-between gap-3 animate-in fade-in slide-in-from-top-2 duration-300" id="over-complete-banner-inline">
+                <div className="flex items-center gap-3">
+                  <span className="text-2xl animate-bounce">🔔</span>
+                  <div className="text-left">
+                    <h4 className="text-sm font-black text-amber-900 uppercase tracking-tight">Confirm & Trigger End of Over {currentOverNumber}</h4>
+                    <p className="text-xs text-amber-700 font-medium">Currently, {currentOverLegalBalls} legal balls have been bowled. Please end the over to rotate batsman strike ends and assign the next bowler.</p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowEndOverConfirm(false);
+                    onEndOver();
+                  }}
+                  className="w-full sm:w-auto px-5 py-3 bg-amber-600 hover:bg-amber-700 text-white font-black text-xs uppercase tracking-wider rounded-xl transition-all shadow-md hover:scale-102 active:scale-98 cursor-pointer flex items-center justify-center gap-1.5 shrink-0"
+                  id="btn-inline-trigger-end-over"
+                >
+                  <span>Confirm & End Over ➔</span>
+                </button>
+              </div>
+            )}
             
             {/* Minimal CSS design control block: exact score buttons from template */}
             <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-3">
@@ -633,16 +676,16 @@ export default function ScoreControls({
                         <option value="Bye">Byes</option>
                         <option value="LegBye">Leg Byes</option>
                       </select>
-                      {advExtraType !== 'None' && (
-                        <input
-                          type="number"
-                          min={1}
-                          max={6}
-                          value={advRunsExtras}
-                          onChange={(e) => setAdvRunsExtras(Number(e.target.value))}
-                          className="w-16 px-1.5 py-2 text-center bg-white border border-slate-200 rounded-lg text-xs font-bold"
-                        />
-                      )}
+                      <input
+                        type="number"
+                        min={1}
+                        max={6}
+                        disabled={advExtraType === 'None'}
+                        value={advExtraType === 'None' ? 0 : advRunsExtras}
+                        onChange={(e) => setAdvRunsExtras(Number(e.target.value))}
+                        className="w-20 px-1.5 py-2 text-center bg-white border border-slate-200 rounded-lg text-xs font-bold disabled:opacity-50 disabled:bg-slate-50 disabled:text-slate-400"
+                        id="fielding-byes-value"
+                      />
                     </div>
                   </div>
                 </div>

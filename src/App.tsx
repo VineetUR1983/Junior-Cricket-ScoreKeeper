@@ -388,6 +388,7 @@ export default function App() {
       consecutiveExtras,
       isFreeHitActive,
       manuallySelectedWinnerIndex,
+      currentInningsIndex,
     });
     setUndoStack((prev) => [...prev, currentSnapshot]);
   };
@@ -404,6 +405,9 @@ export default function App() {
     setConsecutiveExtras(parsed.consecutiveExtras);
     setIsFreeHitActive(parsed.isFreeHitActive);
     setManuallySelectedWinnerIndex(parsed.manuallySelectedWinnerIndex !== undefined ? parsed.manuallySelectedWinnerIndex : null);
+    if (parsed.currentInningsIndex !== undefined) {
+      setCurrentInningsIndex(parsed.currentInningsIndex);
+    }
 
     setUndoStack((prev) => prev.slice(0, -1));
 
@@ -416,6 +420,7 @@ export default function App() {
         consecutiveExtras: parsed.consecutiveExtras,
         isFreeHitActive: parsed.isFreeHitActive,
         manuallySelectedWinnerIndex: parsed.manuallySelectedWinnerIndex !== undefined ? parsed.manuallySelectedWinnerIndex : null,
+        currentInningsIndex: parsed.currentInningsIndex,
       });
     }
   };
@@ -525,6 +530,7 @@ export default function App() {
               outPlayer.howOut = 'Retired';
             } else {
               totalWickets += 1;
+              outPlayer.isOut = true;
               if (b.wicketType === 'Caught') {
                 outPlayer.howOut = b.wicketFielderName ? `ct. ${b.wicketFielderName} b. ${bowler.playerName}` : `Caught b. ${bowler.playerName}`;
                 outPlayer.caughtBy = b.wicketFielderName;
@@ -775,10 +781,10 @@ export default function App() {
       }
 
       // Calculate strike rotation for this ball
-      const eligibleCount = battingTeam.players.filter(
+      const eligibleBattersList = battingTeam.players.filter(
         (p) => !outBattersSet.has(p.id) && (ballsFacedMap[p.id] || 0) < batsmanBallLimit
-      ).length;
-      const isSoloActive = eligibleCount === 1;
+      );
+      const isSoloActive = eligibleBattersList.length === 1;
 
       const isByeOrLegBye = b.extraType === 'Bye' || b.extraType === 'LegBye';
       const physicalRuns = isByeOrLegBye ? b.runsFromExtras : b.runsFromBat;
@@ -788,6 +794,16 @@ export default function App() {
         const temp = currStrikerId;
         currStrikerId = currNonStrikerId;
         currNonStrikerId = temp;
+      }
+
+      if (isSoloActive) {
+        const specialBatter = eligibleBattersList[0];
+        currStrikerId = specialBatter.id;
+
+        if (!currNonStrikerId || currNonStrikerId === currStrikerId) {
+          const partner = battingTeam.players.find((p) => p.id !== specialBatter.id);
+          currNonStrikerId = partner ? partner.id : '';
+        }
       }
 
       updatedBalls[i] = b;
@@ -803,9 +819,16 @@ export default function App() {
   const handleSaveEditedBall = (updatedBall: BallRecord) => {
     saveSnapshot();
 
-    const inningsIdx = currentInningsIndex - 1;
+    let inningsIdx = inningsList.findIndex(inn => inn && inn.balls.some(b => b.ballId === updatedBall.ballId));
+    if (inningsIdx === -1) {
+      inningsIdx = currentInningsIndex - 1;
+    }
     const innings = inningsList[inningsIdx];
-    if (!innings || !currentBattingTeam || !currentBowlingTeam) return;
+    if (!innings) return;
+
+    const battingTeam = teams[innings.battingTeamIndex];
+    const bowlingTeam = teams[innings.bowlingTeamIndex];
+    if (!battingTeam || !bowlingTeam) return;
 
     // 1. Swap the edited ball inside local arrays first
     const updatedBalls = innings.balls.map((b) => {
@@ -825,7 +848,7 @@ export default function App() {
     } = propagateStrikerRotation(
       updatedBalls,
       ballIndex !== -1 ? ballIndex : 0,
-      currentBattingTeam,
+      battingTeam,
       innings.batsmanBallLimit || 24
     );
 
@@ -841,7 +864,7 @@ export default function App() {
       currentOverBalls: updatedCurrentOverBalls,
     };
 
-    const recalculated = recalculateInnings(updatedInnings, currentBattingTeam, currentBowlingTeam);
+    const recalculated = recalculateInnings(updatedInnings, battingTeam, bowlingTeam);
 
     // 4. Update core state variables if it's the active innings
     if (inningsIdx === currentInningsIndex - 1) {
@@ -1120,6 +1143,7 @@ export default function App() {
           wicketDetailsString = `Retired: ${outPlayerStats.playerName}`;
         } else {
           // It's a real dismissal (wicket)
+          outPlayerStats.isOut = true;
           updatedInnings.totalWickets += 1;
           const fielderLabel = ballData.wicketFielderName ? ` by ${ballData.wicketFielderName}` : '';
           wicketDetailsString = `Wicket: ${outPlayerStats.playerName} (${ballData.wicketType}${fielderLabel})`;
@@ -1278,14 +1302,16 @@ export default function App() {
     const nextNonStrikerStats = nextNonStrikerId ? updatedBatters.find((b) => b.playerId === nextNonStrikerId) : null;
 
     // Check striker limit
-    if (nextStrikerStats && nextStrikerStats.ballsFaced >= updatedInnings.batsmanBallLimit && !gotOut) {
+    if (nextStrikerStats && nextStrikerStats.ballsFaced >= updatedInnings.batsmanBallLimit) {
       if (nextIsFreeHitActive) {
         // "If Ball limit is reached for the Striker who is supposed to face the free hit, then allow"
       } else {
         const eligibleCount = updatedBatters.filter((b) => !b.isOut && !b.howOut.includes('Retired')).length;
         if (eligibleCount > 1) {
           nextStrikerStats.isOut = true;
-          nextStrikerStats.howOut = 'Retired (Limit Reached)';
+          if (nextStrikerStats.howOut === 'Active' || nextStrikerStats.howOut === '') {
+            nextStrikerStats.howOut = 'Retired (Limit Reached)';
+          }
           nextStrikerId = '';
           hasRetired = true;
           retiredPlayerNames.push(nextStrikerStats.playerName);
@@ -1299,7 +1325,9 @@ export default function App() {
       const currentEligibleCount = updatedBatters.filter((b) => !b.isOut && !b.howOut.includes('Retired')).length;
       if (currentEligibleCount > 1) {
         nextNonStrikerStats.isOut = true;
-        nextNonStrikerStats.howOut = 'Retired (Limit Reached)';
+        if (nextNonStrikerStats.howOut === 'Active' || nextNonStrikerStats.howOut === '') {
+          nextNonStrikerStats.howOut = 'Retired (Limit Reached)';
+        }
         nextNonStrikerId = '';
         hasRetired = true;
         retiredPlayerNames.push(nextNonStrikerStats.playerName);

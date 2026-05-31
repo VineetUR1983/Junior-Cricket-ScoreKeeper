@@ -58,7 +58,7 @@ export default function ScorecardExport({ isOpen, onClose, teams, inningsList, m
       const runDiff = Math.abs(firstGrand - secondGrand);
       return `${winnerName} won by ${runDiff} runs`;
     }
-    const displayTarget = first.totalRuns + (second.totalWickets * 4) - (first.totalWickets * 4) + 1;
+    const displayTarget = first.totalRuns + (second.totalWickets * 4) + 1;
     return `${formatB} is chasing target of ${displayTarget} runs (${second.totalRuns}/${second.totalWickets}, ${formatOvers(second.ballsBowledTotal)} ov)`;
   };
 

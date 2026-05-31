@@ -14,7 +14,7 @@ import OversRecovery from './components/OversRecovery';
 import CorrectTypos from './components/CorrectTypos';
 import ScorecardExport from './components/ScorecardExport';
 import EditBallModal from './components/EditBallModal';
-import { db, saveMatch, deleteMatch, saveOverSnapshot, cleanUpSubsequentSnapshots } from './firebase';
+import { db, saveMatch, deleteMatch, saveOverSnapshot, cleanUpSubsequentSnapshots, getLocalMatches, getLocalOverSnapshots } from './firebase';
 import { collection, query, orderBy, onSnapshot } from 'firebase/firestore';
 import { Trophy, RefreshCw, Play, BookOpen, RotateCcw, PencilLine, Plus, Trash2, Calendar, Loader2, Share2 } from 'lucide-react';
 
@@ -101,7 +101,7 @@ export default function App() {
 
   // Firestore integration states
   const [activeMatchId, setActiveMatchId] = useState<string | null>(null);
-  const [matches, setMatches] = useState<any[]>([]);
+  const [matches, setMatches] = useState<any[]>(() => getLocalMatches());
   const [loadingMatches, setLoadingMatches] = useState<boolean>(true);
   const [overSnapshots, setOverSnapshots] = useState<any[]>([]);
   const [isTypoModalOpen, setIsTypoModalOpen] = useState<boolean>(false);
@@ -116,10 +116,18 @@ export default function App() {
       snapshot.forEach((docSnap) => {
         list.push({ id: docSnap.id, ...docSnap.data() });
       });
+      // Sort in memory by updatedAt or createdAt desc to make sure recently played matches swim to the top
+      list.sort((a, b) => {
+        const timeA = a.updatedAt?.seconds || a.createdAt?.seconds || 0;
+        const timeB = b.updatedAt?.seconds || b.createdAt?.seconds || 0;
+        return timeB - timeA;
+      });
       setMatches(list);
       setLoadingMatches(false);
     }, (err) => {
       console.error("Failed to load match listings from Firestore: ", err);
+      // Perfect safe fallback to offline local records
+      setMatches(getLocalMatches());
       setLoadingMatches(false);
     });
     return unsubscribe;
@@ -131,6 +139,9 @@ export default function App() {
       setOverSnapshots([]);
       return;
     }
+    // Set local snapshots immediately so there is no loading lag whatsoever on match resume
+    setOverSnapshots(getLocalOverSnapshots(activeMatchId));
+
     const q = query(
       collection(db, 'matches', activeMatchId, 'oversSnapshots'),
       orderBy('overNumber', 'asc')
@@ -1481,17 +1492,93 @@ export default function App() {
   };
 
   const handleResetMatch = () => {
-    if (window.confirm("Disconnect current match events and start new setup?")) {
-      setInningsList([null, null]);
-      setCurrentInningsIndex(0);
-      setStrikerId('');
-      setNonStrikerId('');
-      setBowlerId('');
+    if (!activeMatchId) {
+      // Fallback if no match is active
+      if (window.confirm("No active match ID found. Return to setup screen?")) {
+        setInningsList([null, null]);
+        setCurrentInningsIndex(0);
+        setStrikerId('');
+        setNonStrikerId('');
+        setBowlerId('');
+        setConsecutiveExtras(0);
+        setIsFreeHitActive(false);
+        setUndoStack([]);
+        setActiveMatchId(null);
+        setManuallySelectedWinnerIndex(null);
+      }
+      return;
+    }
+
+    const confirmMessage = "Are you sure you want to reset all progress for the current match only to 0? This will permanently wipe all recorded runs, wickets, overs, balls, and snapshots for this match, letting you score it again from the beginning.";
+    if (window.confirm(confirmMessage)) {
+      const battingTeamIdx = 0;
+      const bowlingTeamIdx = 1;
+      const teamA = teams[battingTeamIdx];
+      const teamB = teams[bowlingTeamIdx];
+
+      const initialInnings: Innings = {
+        battingTeamIndex: battingTeamIdx,
+        bowlingTeamIndex: bowlingTeamIdx,
+        batsmanBallLimit: teamA.batsmanBallLimit || matchBatsmanBallLimit || 24,
+        totalRuns: 0,
+        totalWickets: 0,
+        ballsBowledTotal: 0,
+        activeStrikerId: '',
+        activeNonStrikerId: '',
+        activeBowlerId: '',
+        extras: { wides: 0, noBalls: 0, byes: 0, legByes: 0 },
+        batters: teamA.players.map((p) => ({
+          playerId: p.id,
+          playerName: p.name,
+          runs: 0,
+          ballsFaced: 0,
+          fours: 0,
+          sixes: 0,
+          isOut: false,
+          howOut: 'Active',
+        })),
+        bowlers: [],
+        balls: [],
+        currentOverBalls: [],
+        wicketKeeper1Id: findDefaultWicketKeeper(teamB),
+        wicketKeeper2Id: findDefaultWicketKeeper(teamB),
+        isCompleted: false,
+      };
+
+      const nextInningsList: [Innings | null, Innings | null] = [initialInnings, null];
+      const defaultStrikerId = teamA.players[0]?.id || '';
+      const defaultNonStrikerId = teamA.players[1]?.id || '';
+      const defaultBowlerId = teamB.players[0]?.id || '';
+
+      // Update local state variables immediately
+      setInningsList(nextInningsList);
+      setCurrentInningsIndex(1); // Play mode start
+      setStrikerId(defaultStrikerId);
+      setNonStrikerId(defaultNonStrikerId);
+      setBowlerId(defaultBowlerId);
       setConsecutiveExtras(0);
       setIsFreeHitActive(false);
       setUndoStack([]);
-      setActiveMatchId(null);
       setManuallySelectedWinnerIndex(null);
+
+      // Clean snapshots database both locally and in Firestore
+      cleanUpSubsequentSnapshots(activeMatchId, -1, 0);
+      cleanUpSubsequentSnapshots(activeMatchId, -1, 1);
+
+      // Save match state data as clean status to Local storage database and Firestore
+      syncStateToFirestore(activeMatchId, {
+        teams,
+        currentInningsIndex: 1,
+        inningsList: nextInningsList,
+        strikerId: defaultStrikerId,
+        nonStrikerId: defaultNonStrikerId,
+        bowlerId: defaultBowlerId,
+        consecutiveExtras: 0,
+        isFreeHitActive: false,
+        matchOvers,
+        matchBatsmanBallLimit,
+        manuallySelectedWinnerIndex: null,
+      });
     }
   };
 

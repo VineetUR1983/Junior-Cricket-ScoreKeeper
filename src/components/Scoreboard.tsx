@@ -26,6 +26,38 @@ interface ScoreboardProps {
   onSelectBallToEdit?: (ball: BallRecord, idx: number) => void;
 }
 
+// Helpers
+const getBallText = (b: BallRecord): string => {
+  if (b.isWicket) return 'W';
+
+  const runsFromBat = b.runsFromBat || 0;
+  const runsFromExtras = b.runsFromExtras || 0;
+
+  if (b.ballType === 'Wide' || b.extraType === 'Wide') {
+    const suffix = runsFromBat > 0 ? `+${runsFromBat}` : '';
+    const prefix = runsFromExtras > 1 ? `${runsFromExtras}` : '';
+    return `${prefix}Wd${suffix}`;
+  }
+
+  if (b.ballType === 'NoBall' || b.extraType === 'NoBall') {
+    const suffix = runsFromBat > 0 ? `+${runsFromBat}` : '';
+    const prefix = runsFromExtras > 1 ? `${runsFromExtras}` : '';
+    return `${prefix}Nb${suffix}`;
+  }
+
+  if (b.extraType === 'Bye') {
+    const prefix = runsFromExtras > 1 ? `${runsFromExtras}` : '';
+    return `${prefix}By`;
+  }
+
+  if (b.extraType === 'LegBye') {
+    const prefix = runsFromExtras > 1 ? `${runsFromExtras}` : '';
+    return `${prefix}Lb`;
+  }
+
+  return `${runsFromBat}`;
+};
+
 export default function Scoreboard({
   battingTeam,
   bowlingTeam,
@@ -369,10 +401,12 @@ export default function Scoreboard({
                 }`}
                 title="Click to edit details of this ball"
               >
-                <span>
-                  {b.isWicket ? 'W' : b.ballType === 'Wide' ? 'WD' : b.ballType === 'NoBall' ? 'NB' : b.runsFromBat}
+                <span className="text-[9px] font-black tracking-tighter leading-none">
+                  {getBallText(b)}
                 </span>
-                {b.runsFromExtras > 0 && !(b.ballType === 'Wide' || b.ballType === 'NoBall') && (
+                {b.runsFromExtras > 0 && 
+                 !(b.ballType === 'Wide' || b.ballType === 'NoBall') && 
+                 !(b.extraType === 'Bye' || b.extraType === 'LegBye') && (
                   <span className="text-[8px] font-bold absolute -bottom-1 -right-0.5 bg-slate-200 text-slate-800 px-1 rounded-sm">
                     +{b.runsFromExtras}
                   </span>

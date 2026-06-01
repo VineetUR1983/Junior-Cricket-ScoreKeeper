@@ -633,12 +633,16 @@ export default function App() {
       }
     });
 
-    // Re-verify and apply ball limit retirement for physical bat exit
+    // Re-verify and apply ball limit retirement for physical bat exit, respecting Solo Striker status
     resetBatters.forEach((b) => {
       if (b.ballsFaced >= inn.batsmanBallLimit) {
-        b.isOut = true;
-        if (b.howOut === 'Active' || b.howOut === '') {
-          b.howOut = 'Retired (Limit Reached)';
+        // Only retire if doing so does not leave the team with fewer than 2 active batsmen (Solo Striker Mode)
+        const eligiblesCount = resetBatters.filter((rb) => !rb.isOut && !rb.howOut.includes('Retired')).length;
+        if (eligiblesCount > 1) {
+          b.isOut = true;
+          if (b.howOut === 'Active' || b.howOut === '') {
+            b.howOut = 'Retired (Limit Reached)';
+          }
         }
       }
     });
@@ -753,10 +757,20 @@ export default function App() {
         }
       }
       if (b.strikerId && (ballsFacedMap[b.strikerId] || 0) >= batsmanBallLimit) {
-        outBattersSet.add(b.strikerId);
+        const eligibleCountCount = battingTeam.players.filter(
+          (p) => !outBattersSet.has(p.id) && (ballsFacedMap[p.id] || 0) < batsmanBallLimit
+        ).length;
+        if (eligibleCountCount > 1) {
+          outBattersSet.add(b.strikerId);
+        }
       }
       if (b.nonStrikerId && (ballsFacedMap[b.nonStrikerId] || 0) >= batsmanBallLimit) {
-        outBattersSet.add(b.nonStrikerId);
+        const eligibleCountCount = battingTeam.players.filter(
+          (p) => !outBattersSet.has(p.id) && (ballsFacedMap[p.id] || 0) < batsmanBallLimit
+        ).length;
+        if (eligibleCountCount > 1) {
+          outBattersSet.add(b.nonStrikerId);
+        }
       }
     }
 
@@ -842,14 +856,24 @@ export default function App() {
         }
       }
 
-      // Handle compulsory retirements upon hitting the ball limit
+      // Handle compulsory retirements upon hitting the ball limit, respecting Solo Striker status
       if (currStrikerId && (ballsFacedMap[currStrikerId] || 0) >= batsmanBallLimit) {
-        outBattersSet.add(currStrikerId);
-        currStrikerId = '';
+        const eligibleCountCount = battingTeam.players.filter(
+          (p) => !outBattersSet.has(p.id) && (ballsFacedMap[p.id] || 0) < batsmanBallLimit
+        ).length;
+        if (eligibleCountCount > 1) {
+          outBattersSet.add(currStrikerId);
+          currStrikerId = '';
+        }
       }
       if (currNonStrikerId && (ballsFacedMap[currNonStrikerId] || 0) >= batsmanBallLimit) {
-        outBattersSet.add(currNonStrikerId);
-        currNonStrikerId = '';
+        const eligibleCountCount = battingTeam.players.filter(
+          (p) => !outBattersSet.has(p.id) && (ballsFacedMap[p.id] || 0) < batsmanBallLimit
+        ).length;
+        if (eligibleCountCount > 1) {
+          outBattersSet.add(currNonStrikerId);
+          currNonStrikerId = '';
+        }
       }
 
       // Calculate strike rotation for this ball
@@ -1826,7 +1850,7 @@ export default function App() {
                       : 'text-slate-400 hover:text-slate-705'
                   }`}
                 >
-                  Overs Snapshots
+                  Overs History & Backups
                 </button>
                 <button
                   onClick={() => setActivePlayTab('rules')}
@@ -2218,6 +2242,8 @@ export default function App() {
                 overSnapshots={overSnapshots}
                 inningsIndex={currentInningsIndex - 1}
                 onRestoreSnapshot={handleRestoreSnapshot}
+                inningsList={inningsList}
+                teams={teams}
               />
             )}
 

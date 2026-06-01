@@ -16,7 +16,7 @@ import ScorecardExport from './components/ScorecardExport';
 import EditBallModal from './components/EditBallModal';
 import { db, saveMatch, deleteMatch, saveOverSnapshot, cleanUpSubsequentSnapshots, getLocalMatches, getLocalOverSnapshots } from './firebase';
 import { collection, query, orderBy, onSnapshot } from 'firebase/firestore';
-import { Trophy, RefreshCw, Play, BookOpen, RotateCcw, PencilLine, Plus, Trash2, Calendar, Loader2, Share2 } from 'lucide-react';
+import { Trophy, RefreshCw, Play, BookOpen, RotateCcw, PencilLine, Plus, Trash2, Calendar, Loader2, Share2, Check } from 'lucide-react';
 
 const INITIAL_SQUAD_A: Player[] = [
   { id: 'a-1', name: 'Leo "Express" Carter', role: 'All-rounder' },
@@ -107,6 +107,78 @@ export default function App() {
   const [isTypoModalOpen, setIsTypoModalOpen] = useState<boolean>(false);
   const [isExportModalOpen, setIsExportModalOpen] = useState<boolean>(false);
   const [exportMatchData, setExportMatchData] = useState<{ teams: [Team, Team]; inningsList: [Innings | null, Innings | null] } | null>(null);
+
+  // Target Achieved verification states
+  const [isTargetAchievedModalOpen, setIsTargetAchievedModalOpen] = useState<boolean>(false);
+  const [hasDeclinedTargetPrompt, setHasDeclinedTargetPrompt] = useState<boolean>(false);
+
+  // Target Achieved verification hook
+  useEffect(() => {
+    if (currentInningsIndex !== 2) {
+      if (hasDeclinedTargetPrompt) {
+        setHasDeclinedTargetPrompt(false);
+      }
+      if (isTargetAchievedModalOpen) {
+        setIsTargetAchievedModalOpen(false);
+      }
+      return;
+    }
+    const firstInnings = inningsList[0];
+    const secondInnings = inningsList[1];
+    if (!firstInnings || !secondInnings || secondInnings.isCompleted) {
+      if (hasDeclinedTargetPrompt) {
+        setHasDeclinedTargetPrompt(false);
+      }
+      if (isTargetAchievedModalOpen) {
+        setIsTargetAchievedModalOpen(false);
+      }
+      return;
+    }
+
+    const target = firstInnings.totalRuns + (secondInnings.totalWickets * 4) + 1;
+    if (secondInnings.totalRuns >= target) {
+      if (!hasDeclinedTargetPrompt && !isTargetAchievedModalOpen) {
+        setIsTargetAchievedModalOpen(true);
+      }
+    } else {
+      if (hasDeclinedTargetPrompt) {
+        setHasDeclinedTargetPrompt(false);
+      }
+      if (isTargetAchievedModalOpen) {
+        setIsTargetAchievedModalOpen(false);
+      }
+    }
+  }, [currentInningsIndex, inningsList, hasDeclinedTargetPrompt, isTargetAchievedModalOpen]);
+
+  // Handler to Declare Winner (conclude the match early if target achieved is acceptable and confirmed)
+  const handleDeclareWinnerYes = () => {
+    const first = inningsList[0];
+    const second = inningsList[1];
+    if (!first || !second) return;
+
+    // Build updated second innings
+    const updatedSecond = { ...second, isCompleted: true };
+    const updatedInningsList = [first, updatedSecond] as [Innings | null, Innings | null];
+    setInningsList(updatedInningsList);
+
+    // Who won?
+    const winnerIndex = second.battingTeamIndex;
+    setManuallySelectedWinnerIndex(winnerIndex);
+
+    // Sync to Firestore if there's an active match
+    if (activeMatchId) {
+      syncStateToFirestore(activeMatchId, {
+        inningsList: updatedInningsList,
+        manuallySelectedWinnerIndex: winnerIndex,
+      });
+    }
+
+    // Close the target achieved modal
+    setIsTargetAchievedModalOpen(false);
+
+    // Provide confirmation message to declare the winner
+    alert(`Confirmation: Match concluded successfully! ${teams[winnerIndex].name} has been declared the winner.`);
+  };
 
   // Listen to match changes in Firestore real-time
   useEffect(() => {
@@ -2222,6 +2294,86 @@ export default function App() {
         battingPlayers={currentBattingTeam?.players ?? []}
         fieldingPlayers={currentBowlingTeam?.players ?? []}
       />
+
+      {/* Target Achieved Pop Up Modal */}
+      {isTargetAchievedModalOpen && currentInningsIndex === 2 && inningsList[0] && inningsList[1] && (
+        <div className="fixed inset-0 z-50 bg-slate-900/45 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-200" id="target-achieved-modal">
+          <div className="bg-white rounded-3xl max-w-md w-full shadow-lg border border-slate-100 overflow-hidden animate-in zoom-in-95 duration-200">
+            {/* Header */}
+            <div className="p-6 border-b border-slate-100 bg-emerald-50 text-emerald-950 flex items-center gap-3">
+              <div className="w-10 h-10 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center shrink-0">
+                <Trophy className="w-5 h-5 animate-bounce" />
+              </div>
+              <div>
+                <h3 className="text-base font-black tracking-tight" id="target-achieved-title">Target Achieved!</h3>
+                <p className="text-[10px] text-emerald-700 font-extrabold uppercase tracking-widest mt-0.5">
+                  Second Innings Chase Complete
+                </p>
+              </div>
+            </div>
+
+            {/* Body */}
+            <div className="p-6 space-y-4 text-slate-700">
+              <p className="text-xs font-semibold text-slate-500 leading-relaxed">
+                The chasing team <b>{teams[inningsList[1].battingTeamIndex].name}</b> has successfully achieved or exceeded the target of <b>{(inningsList[0]?.totalRuns || 0) + (inningsList[1]?.totalWickets || 0) * 4 + 1}</b> runs!
+              </p>
+
+              <div className="bg-slate-50 border border-slate-100 rounded-2xl p-4 text-xs font-medium space-y-2" id="innings-completion-summary">
+                <h4 className="text-[10px] uppercase font-black tracking-widest text-slate-400">Match Summary</h4>
+                <div className="grid grid-cols-2 gap-y-1.5 pt-0.5 mt-1 border-t border-slate-100 pr-1.5">
+                  <div className="text-slate-400">1st Innings:</div>
+                  <div className="font-extrabold text-slate-800">{teams[inningsList[0].battingTeamIndex].name} ({inningsList[0]?.totalRuns} runs, {inningsList[0]?.totalWickets} wkts)</div>
+                  
+                  <div className="text-slate-400">Chasing Team:</div>
+                  <div className="font-extrabold text-slate-800">{teams[inningsList[1].battingTeamIndex].name}</div>
+                  
+                  <div className="text-slate-400">Current Score:</div>
+                  <div className="font-extrabold text-slate-800">{inningsList[1]?.totalRuns} / {inningsList[1]?.totalWickets}</div>
+
+                  <div className="text-slate-400">Overs Bowled:</div>
+                  <div className="font-extrabold text-slate-800">
+                    {Math.floor(inningsList[1]?.ballsBowledTotal / 6)}.{inningsList[1]?.ballsBowledTotal % 6} overs
+                  </div>
+
+                  <div className="text-slate-400 font-semibold text-slate-500">Active Target:</div>
+                  <div className="font-black text-indigo-650">{(inningsList[0]?.totalRuns || 0) + (inningsList[1]?.totalWickets || 0) * 4 + 1} runs</div>
+                </div>
+              </div>
+
+              <div className="py-1">
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-1">Verify Decision</label>
+                <p className="text-xs font-bold text-slate-700 leading-relaxed">
+                  Would you like to conclude the match now and declare <span className="text-emerald-700 font-extrabold">{teams[inningsList[1].battingTeamIndex].name}</span> as the winner?
+                </p>
+              </div>
+            </div>
+
+            {/* Action Footer */}
+            <div className="p-6 bg-slate-50 border-t border-slate-100 flex gap-3 justify-end items-center">
+              <button
+                type="button"
+                onClick={() => {
+                  setHasDeclinedTargetPrompt(true);
+                  setIsTargetAchievedModalOpen(false);
+                }}
+                className="py-2.5 px-4 rounded-xl border border-slate-200 text-xs font-extrabold text-slate-500 hover:bg-slate-100 hover:text-slate-700 cursor-pointer"
+                id="btn-target-modal-no"
+              >
+                No, Continue Match
+              </button>
+              <button
+                type="button"
+                onClick={handleDeclareWinnerYes}
+                className="py-2.5 px-5 bg-emerald-650 hover:bg-emerald-700 text-white rounded-xl text-xs font-extrabold shadow-sm transition-all flex items-center gap-1.5 cursor-pointer"
+                id="btn-target-modal-yes"
+              >
+                <Check className="w-3.5 h-3.5" />
+                <span>Yes, Declare Winner</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Basic brand attribution */}
       <footer className="py-4 text-center text-slate-400 text-[10px] uppercase font-black border-t border-slate-200 mt-auto bg-white tracking-widest">
